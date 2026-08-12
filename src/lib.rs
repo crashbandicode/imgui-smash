@@ -85,6 +85,10 @@ unsafe extern "C" fn imgui_post_context() {
 unsafe extern "C" fn imgui_setup_context_export(func: SetupContextFn) {
     POST_INIT_FUNCS.lock().unwrap().push(func);
 }
+#[no_mangle]
+unsafe extern "C" fn imgui_get_context_export() -> *mut u64 {
+    igGetCurrentContext() as _
+}
 
 #[hook(replace = nvnBootstrapLoader)]
 unsafe fn nvn_bootstrap_hook(name: *const c_char) -> *const c_void {
@@ -116,7 +120,7 @@ pub fn main() {
 
     unsafe {
         imgui_smash_context_setup(imgui_post_context as _);
-        imgui_smash_set_logger(imgui_log as *const c_void);
+        // imgui_smash_set_logger(imgui_log as *const c_void);
         imgui_smash_init(
             std::ptr::null(),
             std::ptr::null()
