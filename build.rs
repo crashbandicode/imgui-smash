@@ -7,9 +7,11 @@ use std::process::Command;
 /// archive it was given and refuses that prebuilt file.
 const PREBUILT_NOT_USED: &str = "0042ff0592313228b0746ee9214091249f7c70a1797e1826d990c27ca2fe0e45";
 
-/// Frame-guard static archive. Any other file is refused.
-const PINNED_SHA256: &str = "6c9591cc9f140ca6ce2efee2cdcaa0d8278b43319ea497b3f2434ce19d09ccca";
-const PINNED_SIZE: u64 = 17_181_302;
+/// Static archive built from this repository's imgui-smash/ by
+/// `Build-Standalone.ps1 -Action archive` (renderer correction; demo, debug
+/// tools and default fonts off). Any other file is refused.
+const PINNED_SHA256: &str = "8a06be16dbfd50d10bac81ee5bdd2ffa9cd3472773151cc45f1c2101541f8f7c";
+const PINNED_SIZE: u64 = 13_851_556;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=IMGUI_SMASH_ARTIFACT_DIR");
