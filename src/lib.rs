@@ -12,7 +12,7 @@ mod plugin {
     use skyline::libc::{c_char, c_void};
     use std::sync::Mutex;
 
-    #[link(name = "imgui_smash")]
+    #[link(name = "imgui_smash", kind = "static")]
     unsafe extern "C" {
         fn imgui_smash_init(post_init: *const c_void, render: *const c_void);
         fn imgui_smash_bootstrap_hook(
@@ -24,17 +24,22 @@ mod plugin {
         fn imgui_smash_add_on_draw_frame(new_frame: *const c_void);
         fn imgui_smash_show_mouse(show_mouse: bool);
         fn imgui_smash_context_setup(callback: *const c_void);
+        // ImGui::GetCurrentContext(), which cimgui's igGetCurrentContext wraps.
+        // The Skyline target links with --no-gc-sections, so referencing any
+        // cimgui symbol would keep all of cimgui.o (every ig* wrapper and the
+        // code they reach) in this NRO although nothing here calls them.
+        #[link_name = "_ZN5ImGui17GetCurrentContextEv"]
         fn igGetCurrentContext() -> *mut c_void;
     }
 
     #[cfg(feature = "frame-guard-stats")]
-    #[link(name = "imgui_smash")]
+    #[link(name = "imgui_smash", kind = "static")]
     unsafe extern "C" {
         fn imgui_smash_frame_guard_stats(out: *mut FrameGuardStats) -> i32;
     }
 
     #[cfg(feature = "draw-stats")]
-    #[link(name = "imgui_smash")]
+    #[link(name = "imgui_smash", kind = "static")]
     unsafe extern "C" {
         fn imgui_smash_draw_stats(out: *mut DrawStats) -> i32;
     }
