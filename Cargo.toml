@@ -3,6 +3,8 @@ name = "imgui-smash"
 version = "1.0.1"
 authors = []
 edition = "2021"
+publish = false
+build = "build.rs"
 
 [package.metadata.skyline]
 titleid = "01006A800016E000" # Smash Ultimate
@@ -10,14 +12,28 @@ titleid = "01006A800016E000" # Smash Ultimate
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
-skyline = "0.6.0"
-lazy_static = "1.4"
-imgui-api = { git = "https://github.com/Coolsonickirby/imgui-api.git" }
+[features]
+default = []
+# Optional diagnostic. Links imgui_smash_frame_guard_stats. Not the draw-slot getter.
+frame-guard-stats = []
+# Optional. Links imgui_smash_draw_stats. Not a default.
+draw-stats = []
+
+[target.'cfg(target_os = "switch")'.dependencies]
+skyline = "=0.6.0"
 
 [profile.dev]
 panic = "abort"
+opt-level = 3
+debug = 2
 
 [profile.release]
 panic = "abort"
-lto = true
+opt-level = 3
+debug = 2
+strip = false
+lto = "thin"
+codegen-units = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("switch"))'] }

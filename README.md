@@ -65,6 +65,17 @@ To compile, install:
 
 After all that, run the `make` command. The host plugin will be built to `./target/aarch64-skyline-switch/release`.
 
+### `deluxe` branch (SSBU Online Deluxe fork)
+
+The `deluxe` branch replaces the Makefile and `bind.sh` with `Build-Standalone.ps1`
+and drops the `imgui-api` dependency. `build.rs` links only an archive whose size and
+SHA-256 match its pin.
+
+```text
+pwsh ./Build-Standalone.ps1 -Action archive   # pinned devkitA64 image -> lib/cmake-build/libimgui_smash.a
+pwsh ./Build-Standalone.ps1 -Action skyline   # cargo skyline build --release
+```
+
 ## Credits
 - [Coolsonickirby](https://github.com/Coolsonickirby) - Modified imgui-xeno to work with Smash & Created Host Plugin
 - [blujay](https://github.com/blu-dev) - Input Visualizer mod was used as reference for understanding nvn and nvn rendering implementation
