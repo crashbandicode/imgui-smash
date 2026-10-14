@@ -25,9 +25,6 @@ mod plugin {
         fn imgui_smash_show_mouse(show_mouse: bool);
         fn imgui_smash_context_setup(callback: *const c_void);
         fn igGetCurrentContext() -> *mut c_void;
-
-        #[link_name = "_ZN5ImGui14ShowDemoWindowEPb"]
-        fn imgui_show_demo_window(open: *const bool);
     }
 
     #[cfg(feature = "frame-guard-stats")]
@@ -163,10 +160,11 @@ mod plugin {
         unsafe { imgui_smash_add_on_draw_frame(new_frame) }
     }
 
+    /// Kept so a plugin that imports this upstream export still resolves it.
+    /// The archive is built with IMGUI_DISABLE_DEMO_WINDOWS, so the demo is
+    /// not linked and this draws nothing.
     #[no_mangle]
-    pub extern "C" fn imgui_show_demo_window_wrapper(open: *const bool) {
-        unsafe { imgui_show_demo_window(open) }
-    }
+    pub extern "C" fn imgui_show_demo_window_wrapper(_open: *const bool) {}
 
     #[no_mangle]
     pub unsafe extern "C" fn imgui_setup_context_export(func: SetupContextFn) {
