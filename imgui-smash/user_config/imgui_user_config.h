@@ -8,3 +8,9 @@
 // change any struct in imgui.h or imgui_internal.h; ShowDemoWindow(), ShowStyleEditor()
 // and the other demo entry points remain as empty functions.
 #define IMGUI_DISABLE_DEMO_WINDOWS
+
+// Metrics/debugger, ID stack tool, item picker, debug log, the allocation hook in
+// MemAlloc/MemFree and the hover-time duplicate-ID highlight. ShowMetricsWindow() and
+// the other entry points remain as empty functions; cimgui's igDebugLog/igDebugLogV
+// are kept as no-ops. No struct layout changes.
+#define IMGUI_DISABLE_DEBUG_TOOLS

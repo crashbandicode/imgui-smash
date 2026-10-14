@@ -185,7 +185,12 @@ CIMGUI_API bool igShowStyleSelector(const char* label)
 }
 CIMGUI_API void igShowFontSelector(const char* label)
 {
+    // imgui.cpp only defines ShowFontSelector when demo windows or debug tools are enabled.
+#if !defined(IMGUI_DISABLE_DEMO_WINDOWS) || !defined(IMGUI_DISABLE_DEBUG_TOOLS)
     return ImGui::ShowFontSelector(label);
+#else
+    IM_UNUSED(label);
+#endif
 }
 CIMGUI_API void igShowUserGuide()
 {
@@ -1790,11 +1795,20 @@ CIMGUI_API const char* igSaveIniSettingsToMemory(size_t* out_ini_size)
 }
 CIMGUI_API void igDebugTextEncoding(const char* text)
 {
+    // Declared in imgui.h but only defined in imgui.cpp without IMGUI_DISABLE_DEBUG_TOOLS.
+#ifndef IMGUI_DISABLE_DEBUG_TOOLS
     return ImGui::DebugTextEncoding(text);
+#else
+    IM_UNUSED(text);
+#endif
 }
 CIMGUI_API void igDebugFlashStyleColor(ImGuiCol idx)
 {
+#ifndef IMGUI_DISABLE_DEBUG_TOOLS
     return ImGui::DebugFlashStyleColor(idx);
+#else
+    IM_UNUSED(idx);
+#endif
 }
 CIMGUI_API void igDebugStartItemPicker()
 {
@@ -1804,6 +1818,9 @@ CIMGUI_API bool igDebugCheckVersionAndDataLayout(const char* version_str,size_t 
 {
     return ImGui::DebugCheckVersionAndDataLayout(version_str,sz_io,sz_style,sz_vec2,sz_vec4,sz_drawvert,sz_drawidx);
 }
+// IMGUI_DISABLE_DEBUG_TOOLS removes ImGui::DebugLog/DebugLogV. The cimgui entry
+// points stay defined (same signatures) so the ig* ABI does not change; they log nothing.
+#ifndef IMGUI_DISABLE_DEBUG_TOOLS
 CIMGUI_API void igDebugLog(const char* fmt,...)
 {
     va_list args;
@@ -1811,6 +1828,12 @@ CIMGUI_API void igDebugLog(const char* fmt,...)
     ImGui::DebugLogV(fmt,args);
     va_end(args);
 }
+#else
+CIMGUI_API void igDebugLog(const char* fmt,...)
+{
+    IM_UNUSED(fmt);
+}
+#endif
 #ifdef CIMGUI_VARGS0
 CIMGUI_API void igDebugLog0(const char* fmt)
 {
@@ -1819,7 +1842,12 @@ CIMGUI_API void igDebugLog0(const char* fmt)
 #endif
 CIMGUI_API void igDebugLogV(const char* fmt,va_list args)
 {
+#ifndef IMGUI_DISABLE_DEBUG_TOOLS
     return ImGui::DebugLogV(fmt,args);
+#else
+    IM_UNUSED(fmt);
+    IM_UNUSED(args);
+#endif
 }
 CIMGUI_API void igSetAllocatorFunctions(ImGuiMemAllocFunc alloc_func,ImGuiMemFreeFunc free_func,void* user_data)
 {
