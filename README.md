@@ -1,5 +1,10 @@
 # imgui-smash (`deluxe` branch)
 
+> **Disclaimer:** the `deluxe` branch changes were developed with the
+> assistance of AI (Claude, Codex and other coding agents) under the
+> operator's direction and review, and tested as recorded in Online Deluxe's
+> `docs/VALIDATION.md` and `docs/IMGUI_DEPENDENCY.md`.
+
 A [Dear ImGui](https://github.com/ocornut/imgui) backend on NVN for
 **Super Smash Bros. Ultimate**, forked from
 [Coolsonickirby/imgui-smash](https://github.com/Coolsonickirby/imgui-smash)
