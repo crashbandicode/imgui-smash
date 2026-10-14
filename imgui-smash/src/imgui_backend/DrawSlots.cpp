@@ -14,17 +14,11 @@
 
 namespace {
 
-#ifndef IMGUI_SMASH_INITIAL_COMMAND_BUDGET
-#define IMGUI_SMASH_INITIAL_COMMAND_BUDGET (256u * 1024u)
-#endif
-#ifndef IMGUI_SMASH_INITIAL_CONTROL_BUDGET
-#define IMGUI_SMASH_INITIAL_CONTROL_BUDGET (64u * 1024u)
-#endif
-
-constexpr size_t kInitialCommand = IMGUI_SMASH_INITIAL_COMMAND_BUDGET;
-constexpr size_t kInitialControl = IMGUI_SMASH_INITIAL_CONTROL_BUDGET;
-constexpr size_t kReserveCommand = 256u * 1024u;
-constexpr size_t kReserveControl = 64u * 1024u;
+// Budgets and their rationale live in command_memory_reserve.hpp.
+constexpr size_t kInitialCommand = kDefaultInitialCommand;
+constexpr size_t kInitialControl = kDefaultInitialControl;
+constexpr size_t kReserveCommand = kDefaultReserveCommand;
+constexpr size_t kReserveControl = kDefaultReserveControl;
 constexpr size_t kGeometryInitial = 64u * 1024u;
 constexpr size_t kGeometryCap = 1024u * 1024u;
 constexpr int kPageFallback = 0x1000;

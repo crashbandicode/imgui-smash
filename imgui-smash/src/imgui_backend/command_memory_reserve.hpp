@@ -7,6 +7,33 @@
 // Shared by DrawSlots and the host tests. Event codes 0 and 1 are
 // NVNcommandBufferMemoryEvent OUT_OF_COMMAND_MEMORY and OUT_OF_CONTROL_MEMORY.
 
+// Per-slot budgets. A frame records one setup group plus a few commands per
+// ImDrawCmd; the largest recording seen across the Eden evidence (Deluxe and
+// Elite menus open together through menus, CSS, a match and results) used
+// 1,256 bytes of command memory and 120 bytes of control memory. The initial
+// budgets below keep more than 25x that, and the reserve of the same size
+// finishes and discards one oversized frame instead of aborting. The command
+// pool is rounded up to the device's memory-pool page (64 KiB on NX), so
+// 32 KiB + 32 KiB fills exactly one page; the former 256 KiB + 256 KiB pool
+// and 64 KiB + 64 KiB control block cost 5 MiB of game heap over eight slots.
+#ifndef IMGUI_SMASH_INITIAL_COMMAND_BUDGET
+#define IMGUI_SMASH_INITIAL_COMMAND_BUDGET (32u * 1024u)
+#endif
+#ifndef IMGUI_SMASH_RESERVE_COMMAND_BUDGET
+#define IMGUI_SMASH_RESERVE_COMMAND_BUDGET (32u * 1024u)
+#endif
+#ifndef IMGUI_SMASH_INITIAL_CONTROL_BUDGET
+#define IMGUI_SMASH_INITIAL_CONTROL_BUDGET (8u * 1024u)
+#endif
+#ifndef IMGUI_SMASH_RESERVE_CONTROL_BUDGET
+#define IMGUI_SMASH_RESERVE_CONTROL_BUDGET (8u * 1024u)
+#endif
+
+constexpr size_t kDefaultInitialCommand = IMGUI_SMASH_INITIAL_COMMAND_BUDGET;
+constexpr size_t kDefaultReserveCommand = IMGUI_SMASH_RESERVE_COMMAND_BUDGET;
+constexpr size_t kDefaultInitialControl = IMGUI_SMASH_INITIAL_CONTROL_BUDGET;
+constexpr size_t kDefaultReserveControl = IMGUI_SMASH_RESERVE_CONTROL_BUDGET;
+
 struct MemoryBudget {
   size_t bytes = 0;
   bool ok = false;

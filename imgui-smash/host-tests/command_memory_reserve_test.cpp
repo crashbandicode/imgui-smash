@@ -34,6 +34,33 @@ void test_alignment_and_minimum() {
   expect(layout.command.base + layout.command.reserve <= layout.command_pool, "reserve fits in the pool");
 }
 
+void test_default_budgets() {
+  // Largest per-frame usage seen in the Eden evidence (Deluxe + Elite menus,
+  // CSS, match, results): 1,256 B command, 120 B control.
+  constexpr size_t observed_command = 1256;
+  constexpr size_t observed_control = 120;
+  expect(kDefaultInitialCommand >= 25 * observed_command, "initial command budget keeps 25x the observed maximum");
+  expect(kDefaultReserveCommand >= observed_command, "command reserve covers one observed frame");
+  expect(kDefaultInitialControl >= 25 * observed_control, "initial control budget keeps 25x the observed maximum");
+  expect(kDefaultReserveControl >= observed_control, "control reserve covers one observed frame");
+  // NX: command alignment 4, control alignment 8, memory-pool page 64 KiB.
+  const SlotReserveLayout nx = plan_slot_memory(kDefaultInitialCommand, kDefaultInitialControl, kDefaultReserveCommand,
+                                                kDefaultReserveControl, 0, 0, 4, 8, 65536);
+  expect(nx.ok, "default budgets plan on NX constants");
+  expect(nx.command_pool == 65536, "default command pool is exactly one 64 KiB page");
+  expect(nx.command.base + nx.command.reserve == nx.command_pool, "default command budgets fill the page");
+  expect(nx.control.base + nx.control.reserve == 16u * 1024u, "default control block is 16 KiB");
+  // Device minimums below the budgets do not change the layout.
+  const SlotReserveLayout mins = plan_slot_memory(kDefaultInitialCommand, kDefaultInitialControl, kDefaultReserveCommand,
+                                                  kDefaultReserveControl, 4096, 1024, 4, 8, 65536);
+  expect(mins.ok && mins.command_pool == 65536 && mins.control.base + mins.control.reserve == 16u * 1024u,
+         "device minimums below the budgets keep the default layout");
+  // A 4 KiB page gives the same pool because the budgets are page multiples.
+  const SlotReserveLayout small_page = plan_slot_memory(kDefaultInitialCommand, kDefaultInitialControl,
+                                                        kDefaultReserveCommand, kDefaultReserveControl, 0, 0, 4, 8, 4096);
+  expect(small_page.ok && small_page.command_pool == 65536, "default command pool on a 4 KiB page is still 64 KiB");
+}
+
 void test_second_use_and_reset() {
   MemoryRegion command{512, 4096, false};
   MemoryRegion control{64, 1024, false};
@@ -115,6 +142,7 @@ void test_mock_callback_regions() {
 
 int main() {
   test_alignment_and_minimum();
+  test_default_budgets();
   test_second_use_and_reset();
   test_mock_callback_regions();
   if (g_failures != 0) {
