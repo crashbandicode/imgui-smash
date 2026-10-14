@@ -30,6 +30,8 @@ private:
   nvn::MemoryPool pool;
   nvn::Buffer buffer;
 
-  void *memBuffer;
+  void *memBuffer = nullptr;
+  bool mPoolLive = false;
+  bool mBufferLive = false;
   bool mIsReady = false;
 };

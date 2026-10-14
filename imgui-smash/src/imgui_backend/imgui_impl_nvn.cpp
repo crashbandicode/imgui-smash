@@ -1,4 +1,5 @@
 #include "imgui_impl_nvn.hpp"
+#include "DrawSlots.h"
 #include "helpers.h"
 #include "imgui_hid_mappings.h"
 #include "logger/Logger.hpp"
@@ -19,6 +20,7 @@
 #define UBOSIZE 0x1000
 
 typedef float Matrix44f[4][4];
+static_assert(sizeof(Matrix44f) == 64, "projection matrix update is 64 bytes");
 
 // orthographic matrix used for shader
 static Matrix44f projMatrix = {};
@@ -51,18 +53,43 @@ namespace ImguiNvnBackend {
   void loadIni();
   void saveIni();
 
+  MemoryBuffer *checkedMemoryBuffer(size_t size) {
+    void *storage = ImGui::MemAlloc(sizeof(MemoryBuffer));
+    if (storage == nullptr) {
+      return nullptr;
+    }
+    return new (ImNewWrapper(), storage) MemoryBuffer(size);
+  }
+
+  MemoryBuffer *checkedMemoryBuffer(size_t size, nvn::MemoryPoolFlags flags) {
+    void *storage = ImGui::MemAlloc(sizeof(MemoryBuffer));
+    if (storage == nullptr) {
+      return nullptr;
+    }
+    return new (ImNewWrapper(), storage) MemoryBuffer(size, flags);
+  }
+
+  MemoryBuffer *checkedMemoryBuffer(size_t size, void *bytes, nvn::MemoryPoolFlags flags) {
+    void *storage = ImGui::MemAlloc(sizeof(MemoryBuffer));
+    if (storage == nullptr) {
+      return nullptr;
+    }
+    return new (ImNewWrapper(), storage) MemoryBuffer(size, bytes, flags);
+  }
+
   // doesnt get used anymore really, as back when it was needed i had a simplified shader to test with, but now I just test with the actual imgui shader
   void initTestShader() {
 
     auto bd = getBackendData();
     bd->testShaderBinary = ImguiShaderCompiler::CompileShader("test");
 
-    bd->testShaderBuffer = IM_NEW(MemoryBuffer)(bd->testShaderBinary.size, bd->testShaderBinary.ptr,
-                                                nvn::MemoryPoolFlags::CPU_UNCACHED |
-                                                nvn::MemoryPoolFlags::GPU_CACHED |
-                                                nvn::MemoryPoolFlags::SHADER_CODE);
+    bd->testShaderBuffer = checkedMemoryBuffer(bd->testShaderBinary.size, bd->testShaderBinary.ptr,
+                                               nvn::MemoryPoolFlags::CPU_UNCACHED |
+                                               nvn::MemoryPoolFlags::GPU_CACHED |
+                                               nvn::MemoryPoolFlags::SHADER_CODE);
 
-    SMASH_ASSERT(bd->testShaderBuffer->IsBufferReady(), "Shader Buffer was not ready! unable to continue.");
+    SMASH_ASSERT(bd->testShaderBuffer != nullptr && bd->testShaderBuffer->IsBufferReady(),
+                 "Shader Buffer was not ready! unable to continue.");
 
     BinaryHeader offsetData = BinaryHeader((u32 *) bd->testShaderBinary.ptr);
 
@@ -190,11 +217,11 @@ namespace ImguiNvnBackend {
         bd->vtxBuffer->Finalize();
         IM_FREE(bd->vtxBuffer);
       }
-      bd->vtxBuffer = IM_NEW(MemoryBuffer)(totalVtxSize);
+      bd->vtxBuffer = checkedMemoryBuffer(totalVtxSize);
       Logger::log("(Re)sized Vertex Buffer to Size: %d\n", totalVtxSize);
     }
 
-    if (!bd->vtxBuffer->IsBufferReady()) {
+    if (bd->vtxBuffer == nullptr || !bd->vtxBuffer->IsBufferReady()) {
       Logger::log("Cannot Draw Data! Buffers are not Ready.\n");
       return;
     }
@@ -374,11 +401,11 @@ namespace ImguiNvnBackend {
       return false;
     }
 
-    bd->shaderMemory = IM_NEW(MemoryBuffer)(binarySize, shaderBinary, nvn::MemoryPoolFlags::CPU_UNCACHED |
-                                                                      nvn::MemoryPoolFlags::GPU_CACHED |
-                                                                      nvn::MemoryPoolFlags::SHADER_CODE);
+    bd->shaderMemory = checkedMemoryBuffer(binarySize, shaderBinary, nvn::MemoryPoolFlags::CPU_UNCACHED |
+                                                                     nvn::MemoryPoolFlags::GPU_CACHED |
+                                                                     nvn::MemoryPoolFlags::SHADER_CODE);
 
-    if (!bd->shaderMemory->IsBufferReady()) {
+    if (bd->shaderMemory == nullptr || !bd->shaderMemory->IsBufferReady()) {
       Logger::log("Shader Memory Pool not Ready! Unable to continue.\n");
       return false;
     }
@@ -404,9 +431,9 @@ namespace ImguiNvnBackend {
 
     // Uniform Block Object Memory Setup
 
-    bd->uniformMemory = IM_NEW(MemoryBuffer)(UBOSIZE);
+    bd->uniformMemory = checkedMemoryBuffer(UBOSIZE);
 
-    if (!bd->uniformMemory->IsBufferReady()) {
+    if (bd->uniformMemory == nullptr || !bd->uniformMemory->IsBufferReady()) {
       Logger::log("Uniform Memory Pool not Ready! Unable to continue.\n");
       return false;
     }
@@ -448,6 +475,7 @@ namespace ImguiNvnBackend {
     bd->device = initInfo.device;
     bd->queue = initInfo.queue;
     bd->cmdBuf = initInfo.cmdBuf;
+    bd->recordingCmd = nullptr;
     bd->isInitialized = false;
 
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
@@ -484,6 +512,7 @@ namespace ImguiNvnBackend {
 
   void ShutdownBackend() {
     auto *bd = getBackendData();
+    ImguiDrawSlots::shutdown(bd->device);
     
     if (bd->vtxBuffer) {
         bd->vtxBuffer->Finalize();
@@ -613,13 +642,14 @@ namespace ImguiNvnBackend {
   void setRenderStates() {
 
     auto bd = getBackendData();
+    nvn::CommandBuffer *cmd = bd->recordingCmd != nullptr ? bd->recordingCmd : bd->cmdBuf;
 
     nvn::PolygonState polyState;
     polyState.SetDefaults();
     polyState.SetPolygonMode(nvn::PolygonMode::FILL);
     polyState.SetCullFace(nvn::Face::NONE);
     polyState.SetFrontFace(nvn::FrontFace::CCW);
-    bd->cmdBuf->BindPolygonState(&polyState);
+    cmd->BindPolygonState(&polyState);
 
     nvn::ColorState colorState;
     colorState.SetDefaults();
@@ -628,20 +658,20 @@ namespace ImguiNvnBackend {
     for (int i = 0; i < 8; ++i) {
       colorState.SetBlendEnable(i, true);
     }
-    bd->cmdBuf->BindColorState(&colorState);
+    cmd->BindColorState(&colorState);
 
     nvn::BlendState blendState;
     blendState.SetDefaults();
     blendState.SetBlendFunc(nvn::BlendFunc::SRC_ALPHA, nvn::BlendFunc::ONE_MINUS_SRC_ALPHA, nvn::BlendFunc::ONE,
                             nvn::BlendFunc::ZERO);
     blendState.SetBlendEquation(nvn::BlendEquation::ADD, nvn::BlendEquation::ADD);
-    bd->cmdBuf->BindBlendState(&blendState);
+    cmd->BindBlendState(&blendState);
 
-    bd->cmdBuf->BindVertexAttribState(3, bd->attribStates);
-    bd->cmdBuf->BindVertexStreamState(1, &bd->streamState);
+    cmd->BindVertexAttribState(3, bd->attribStates);
+    cmd->BindVertexStreamState(1, &bd->streamState);
 
-    bd->cmdBuf->SetTexturePool(&bd->texPool);
-    bd->cmdBuf->SetSamplerPool(&bd->samplerPool);
+    cmd->SetTexturePool(&bd->texPool);
+    cmd->SetSamplerPool(&bd->samplerPool);
   }
 
   nvn::CommandHandle renderDrawData(ImDrawData *drawData) {
@@ -678,120 +708,78 @@ namespace ImguiNvnBackend {
       return 0;
     }
 
-    // initializes/resizes buffer used for all vertex data created by ImGui
-    size_t totalVtxSize = drawData->TotalVtxCount * sizeof(ImDrawVert);
-    if (!bd->vtxBuffer || bd->vtxBuffer->GetPoolSize() < totalVtxSize || bd->resetData) {
-      if (bd->vtxBuffer) {
-        bd->vtxBuffer->Finalize();
-        IM_FREE(bd->vtxBuffer);
-        Logger::log("Resizing Vertex Buffer to Size: %d\n", totalVtxSize);
-      } else {
-        Logger::log("Initializing Vertex Buffer to Size: %d\n", totalVtxSize);
-      }
-
-      bd->vtxBuffer = IM_NEW(MemoryBuffer)(totalVtxSize);
+    size_t totalVtxSize = static_cast<size_t>(drawData->TotalVtxCount) * sizeof(ImDrawVert);
+    size_t totalIdxSize = static_cast<size_t>(drawData->TotalIdxCount) * sizeof(ImDrawIdx);
+    const int slot = ImguiDrawSlots::begin(bd->device, totalVtxSize, totalIdxSize);
+    if (slot < 0) {
+      return 0;
     }
-
-    // initializes/resizes buffer used for all index data created by ImGui
-    size_t totalIdxSize = drawData->TotalIdxCount * sizeof(ImDrawIdx);
-    if (!bd->idxBuffer || bd->idxBuffer->GetPoolSize() < totalIdxSize || bd->resetData) {
-      if (bd->idxBuffer) {
-
-        bd->idxBuffer->Finalize();
-        IM_FREE(bd->idxBuffer);
-
-        Logger::log("Resizing Index Buffer to Size: %d\n", totalIdxSize);
-      } else {
-        Logger::log("Initializing Index Buffer to Size: %d\n", totalIdxSize);
-      }
-
-      bd->idxBuffer = IM_NEW(MemoryBuffer)(totalIdxSize);
-
-    }
-
-    // if we fail to resize/init either buffers, end execution before we try to use said invalid buffer(s)
-    if (!(bd->vtxBuffer->IsBufferReady() && bd->idxBuffer->IsBufferReady())) {
-      Logger::log("Cannot Draw Data! Buffers are not Ready.\n");
+    nvn::CommandBuffer *cmd = ImguiDrawSlots::commandBuffer(slot);
+    MemoryBuffer *vtx = ImguiDrawSlots::vertex(slot);
+    MemoryBuffer *idx = ImguiDrawSlots::index(slot);
+    MemoryBuffer *uniform = ImguiDrawSlots::uniform(slot);
+    if (cmd == nullptr || vtx == nullptr || idx == nullptr || uniform == nullptr || !vtx->IsBufferReady() ||
+        !idx->IsBufferReady() || !uniform->IsBufferReady()) {
+      ImguiDrawSlots::discardUnsubmitted(slot, bd->device);
       return 0;
     }
 
     orthoRH_ZO(projMatrix, 0.0f, io.DisplaySize.x, io.DisplaySize.y, 0.0f, -1.0f, 1.0f);
 
-    bd->cmdBuf->BeginRecording(); // start recording our commands to the cmd buffer
+    bd->recordingCmd = cmd;
+    cmd->BeginRecording();
 
-    bd->cmdBuf->BindProgram(&bd->shaderProgram, nvn::ShaderStageBits::VERTEX |
-                                                nvn::ShaderStageBits::FRAGMENT); // bind main imgui shader
-
-    bd->cmdBuf->BindUniformBuffer(nvn::ShaderStage::VERTEX, 0, *bd->uniformMemory,
-                                  UBOSIZE); // bind uniform block ptr
-    bd->cmdBuf->UpdateUniformBuffer(*bd->uniformMemory, UBOSIZE, 0, sizeof(projMatrix),
-                                    &projMatrix); // add projection matrix data to uniform data
-
-    setRenderStates(); // sets up the rest of the render state, required so that our shader properly gets drawn to the screen
+    // Setup is one uninterruptible group. Its largest immediate update is the
+    // 64-byte projection matrix. Later checks stop further groups after overflow.
+    if (!ImguiDrawSlots::overflowed(slot)) {
+      cmd->BindProgram(&bd->shaderProgram, nvn::ShaderStageBits::VERTEX | nvn::ShaderStageBits::FRAGMENT);
+      cmd->BindUniformBuffer(nvn::ShaderStage::VERTEX, 0, *uniform, UBOSIZE);
+      cmd->UpdateUniformBuffer(*uniform, UBOSIZE, 0, sizeof(projMatrix), &projMatrix);
+      setRenderStates();
+    }
 
     size_t vtxOffset = 0, idxOffset = 0;
     nvn::TextureHandle boundTextureHandle = 0;
 
-    // load data into buffers, and process draw commands
-    for (int i = 0; i < drawData->CmdListsCount; i++) {
-
+    for (int i = 0; i < drawData->CmdListsCount && !ImguiDrawSlots::overflowed(slot); i++) {
       auto cmdList = drawData->CmdLists[i];
+      size_t vtxSize = static_cast<size_t>(cmdList->VtxBuffer.Size) * sizeof(ImDrawVert);
+      size_t idxSize = static_cast<size_t>(cmdList->IdxBuffer.Size) * sizeof(ImDrawIdx);
 
-      // calc vertex and index buffer sizes
-      size_t vtxSize = cmdList->VtxBuffer.Size * sizeof(ImDrawVert);
-      size_t idxSize = cmdList->IdxBuffer.Size * sizeof(ImDrawIdx);
+      cmd->BindVertexBuffer(0, (*vtx) + vtxOffset, vtxSize);
+      if (vtxSize > 0) {
+        memcpy(vtx->GetMemPtr() + vtxOffset, cmdList->VtxBuffer.Data, vtxSize);
+      }
+      if (idxSize > 0) {
+        memcpy(idx->GetMemPtr() + idxOffset, cmdList->IdxBuffer.Data, idxSize);
+      }
+      if (ImguiDrawSlots::overflowed(slot)) {
+        break;
+      }
 
-      // bind vtx buffer at the current offset
-      bd->cmdBuf->BindVertexBuffer(0, (*bd->vtxBuffer) + vtxOffset, vtxSize);
-
-      // copy data from imgui command list into our gpu dedicated memory
-      memcpy(bd->vtxBuffer->GetMemPtr() + vtxOffset, cmdList->VtxBuffer.Data, vtxSize);
-      memcpy(bd->idxBuffer->GetMemPtr() + idxOffset, cmdList->IdxBuffer.Data, idxSize);
-
-      for (auto cmd: cmdList->CmdBuffer) {
-
-
-//                ImVec2 origRes(1280.0f, 720.0f);
-//                ImVec2 newRes = io.DisplaySize; // (1600.0f, 900.0f);
-
-        // clipping seems to be a bit more broken here than in my other repo, not exactly sure what's changed, but it's disabled for now.
-
-        ImVec4 clipRect = ImVec4(cmd.ClipRect.x,
-                                 cmd.ClipRect.y,
-                                 cmd.ClipRect.z,
-                                 cmd.ClipRect.w);
-
+      for (auto draw : cmdList->CmdBuffer) {
+        ImVec4 clipRect = ImVec4(draw.ClipRect.x, draw.ClipRect.y, draw.ClipRect.z, draw.ClipRect.w);
         ImVec2 clip_min(clipRect.x, clipRect.y);
         ImVec2 clip_max(clipRect.z, clipRect.w);
         ImVec2 clip_size(clip_max.x - clip_min.x, clip_max.y - clip_min.y);
 
-        // if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
-        //   continue;
-        
-        if(currentTextureIndex != -1) {
-            // Logger::log("Current Tex Idx: %d  - Texture Ptr: 0x%p ", currentTextureIndex, (nvn::Texture* const*)&nvnTextures[currentTextureIndex]);
-            bd->cmdBuf->SetRenderTargets(1, (nvn::Texture* const*)(&nvnTextures[currentTextureIndex]), 0, 0, 0);
+        if (currentTextureIndex != -1) {
+          cmd->SetRenderTargets(1, (nvn::Texture *const *)(&nvnTextures[currentTextureIndex]), 0, 0, 0);
         }
-        bd->cmdBuf->SetViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
-        bd->cmdBuf->SetScissor(static_cast<int>(clip_min.x), static_cast<int>(clip_min.y),static_cast<int>(clip_size.x), static_cast<int>(clip_size.y));
-        // bd->cmdBuf->SetScissor(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
+        cmd->SetViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
+        cmd->SetScissor(static_cast<int>(clip_min.x), static_cast<int>(clip_min.y), static_cast<int>(clip_size.x),
+                        static_cast<int>(clip_size.y));
 
-        // float blue[4] = {0.0f, 0.0f, 1.0f, 1.0f};
-        // bd->cmdBuf->ClearColor(0, blue, 0x0000000F);
-
-        // get texture ID from the command
-        nvn::TextureHandle TexID = *(nvn::TextureHandle *) cmd.GetTexID();
-        // if our previous handle is different from the current, bind the texture
+        nvn::TextureHandle TexID = *(nvn::TextureHandle *)draw.GetTexID();
         if (boundTextureHandle != TexID) {
           boundTextureHandle = TexID;
-          bd->cmdBuf->BindTexture(nvn::ShaderStage::FRAGMENT, 0, TexID);
+          cmd->BindTexture(nvn::ShaderStage::FRAGMENT, 0, TexID);
         }
-        // draw our vertices using the indices stored in the buffer, offset by the current command index offset,
-        // as well as the current offset into our buffer.
-        bd->cmdBuf->DrawElementsBaseVertex(nvn::DrawPrimitive::TRIANGLES,
-                                           nvn::IndexType::UNSIGNED_SHORT, cmd.ElemCount,
-                                           (*bd->idxBuffer) + (cmd.IdxOffset * sizeof(ImDrawIdx)) + idxOffset,
-                                           cmd.VtxOffset);
+        cmd->DrawElementsBaseVertex(nvn::DrawPrimitive::TRIANGLES, nvn::IndexType::UNSIGNED_SHORT, draw.ElemCount,
+                                    (*idx) + (draw.IdxOffset * sizeof(ImDrawIdx)) + idxOffset, draw.VtxOffset);
+        if (ImguiDrawSlots::overflowed(slot)) {
+          break;
+        }
       }
 
       vtxOffset += vtxSize;
@@ -799,9 +787,12 @@ namespace ImguiNvnBackend {
     }
 
     bd->resetData = false;
-    // end the command recording and submit to queue.
-    nvn::CommandHandle handle = bd->cmdBuf->EndRecording();
-    // bd->queue->SubmitCommands(1, &handle);
+    nvn::CommandHandle handle = cmd->EndRecording();
+    bd->recordingCmd = nullptr;
+    ImguiDrawSlots::complete(slot, bd->device, handle);
+    if (ImguiDrawSlots::active() != slot) {
+      return 0;
+    }
     return handle;
   }
 }

@@ -10,6 +10,10 @@ MemoryBuffer::MemoryBuffer(size_t size) {
   size_t alignedSize = ALIGN_UP(size, 0x1000);
 
   memBuffer = Mem::AllocateAlign(0x1000, alignedSize);
+  if (memBuffer == nullptr) {
+    Logger::log("Failed to Allocate Memory Pool Storage!\n");
+    return;
+  }
   memset(memBuffer, 0, alignedSize);
 
   bd->memPoolBuilder.SetDefaults()
@@ -21,6 +25,7 @@ MemoryBuffer::MemoryBuffer(size_t size) {
     Logger::log("Failed to Create Memory Pool!\n");
     return;
   }
+  mPoolLive = true;
 
   bd->bufferBuilder.SetDevice(bd->device).SetDefaults().SetStorage(&pool, 0, alignedSize);
 
@@ -28,6 +33,7 @@ MemoryBuffer::MemoryBuffer(size_t size) {
     Logger::log("Failed to Init Buffer!\n");
     return;
   }
+  mBufferLive = true;
 
   mIsReady = true;
 }
@@ -39,6 +45,10 @@ MemoryBuffer::MemoryBuffer(size_t size, nvn::MemoryPoolFlags flags) {
   size_t alignedSize = ALIGN_UP(size, 0x1000);
 
   memBuffer = Mem::AllocateAlign(0x1000, alignedSize);
+  if (memBuffer == nullptr) {
+    Logger::log("Failed to Allocate Memory Pool Storage!\n");
+    return;
+  }
   memset(memBuffer, 0, alignedSize);
 
   bd->memPoolBuilder.SetDefaults()
@@ -50,6 +60,7 @@ MemoryBuffer::MemoryBuffer(size_t size, nvn::MemoryPoolFlags flags) {
     Logger::log("Failed to Create Memory Pool!\n");
     return;
   }
+  mPoolLive = true;
 
   bd->bufferBuilder.SetDevice(bd->device).SetDefaults().SetStorage(&pool, 0, alignedSize);
 
@@ -57,6 +68,7 @@ MemoryBuffer::MemoryBuffer(size_t size, nvn::MemoryPoolFlags flags) {
     Logger::log("Failed to Init Buffer!\n");
     return;
   }
+  mBufferLive = true;
 
   mIsReady = true;
 }
@@ -67,6 +79,10 @@ MemoryBuffer::MemoryBuffer(size_t size, void *bufferPtr, nvn::MemoryPoolFlags fl
 
   // Copy to respect alignment for both size and pointer
   memBuffer = Mem::AllocateAlign(0x1000, size);
+  if (memBuffer == nullptr) {
+    Logger::log("Failed to Allocate Memory Pool Storage!\n");
+    return;
+  }
   memcpy(memBuffer, bufferPtr, size);
 
   bd->memPoolBuilder.SetDefaults()
@@ -78,6 +94,7 @@ MemoryBuffer::MemoryBuffer(size_t size, void *bufferPtr, nvn::MemoryPoolFlags fl
     Logger::log("Failed to Create Memory Pool!\n");
     return;
   }
+  mPoolLive = true;
 
   bd->bufferBuilder.SetDevice(bd->device).SetDefaults().SetStorage(&pool, 0, size);
 
@@ -85,14 +102,25 @@ MemoryBuffer::MemoryBuffer(size_t size, void *bufferPtr, nvn::MemoryPoolFlags fl
     Logger::log("Failed to Init Buffer!\n");
     return;
   }
+  mBufferLive = true;
 
   mIsReady = true;
 }
 
 void MemoryBuffer::Finalize() {
-  IM_FREE(memBuffer);
-  pool.Finalize();
-  buffer.Finalize();
+  if (mBufferLive) {
+    buffer.Finalize();
+    mBufferLive = false;
+  }
+  if (mPoolLive) {
+    pool.Finalize();
+    mPoolLive = false;
+  }
+  if (memBuffer != nullptr) {
+    Mem::Deallocate(memBuffer);
+    memBuffer = nullptr;
+  }
+  mIsReady = false;
 }
 
 void MemoryBuffer::ClearBuffer() {

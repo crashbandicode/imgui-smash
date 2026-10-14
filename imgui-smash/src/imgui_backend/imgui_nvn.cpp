@@ -1,4 +1,6 @@
 #include "imgui_nvn.h"
+#include "DrawSlots.h"
+#include "frame_guard.hpp"
 #include "helpers/InputHelper.h"
 #include "helpers/memoryHelper.h"
 #include "imgui_backend/imgui_impl_nvn.hpp"
@@ -7,7 +9,7 @@
 #include "nvn_CppFuncPtrImpl.h"
 #include "nx/abort.h"
 
-bool IS_DRAWING = false;
+#include <climits>
 
 nvn::Device *nvnDevice;
 nvn::Queue *nvnQueue;
@@ -108,23 +110,44 @@ void presentTexture(nvn::Queue *queue, nvn::Window *window, int texIndex) {
   tempPresentTexFunc(queue, window, texIndex);
 }
 
-void submitCommands(nvn::Queue *queue, int num_commands, nvn::CommandHandle * handles) {
-  if(currentTextureIndex == -1 || !hasInitImGui || IS_DRAWING){
+void submitCommands(nvn::Queue *queue, int num_commands, nvn::CommandHandle *handles) {
+  const bool overlay_ready = currentTextureIndex != -1 && hasInitImGui;
+  FrameEntryOwner::Claim claim = claim_frame_entry(overlay_ready);
+  if (!claim.holds()) {
     tempQueueSubmitFunc(queue, num_commands, handles);
-  } else {
-        nvn::CommandHandle handle = nvnImGui::procDraw();
-        if(handle == 0){
-            tempQueueSubmitFunc(queue, num_commands, handles);
-            return;
-        }
-        void* new_handles = malloc((num_commands + 1) << 3);
-        memcpy((void *)new_handles, (void *)handles, num_commands << 3);
-        *((u64 *)(((u64)new_handles) + (num_commands * 8))) = handle;
-        tempQueueSubmitFunc(queue, num_commands + 1, (nvn::CommandHandle *)new_handles);
-        if((u64)new_handles != 0x0){
-            free(new_handles);
-        }
+    return;
   }
+  if (num_commands == INT_MAX || (num_commands > 0 && handles == nullptr)) {
+    tempQueueSubmitFunc(queue, num_commands, handles);
+    return;
+  }
+
+  nvn::CommandHandle handle = nvnImGui::procDraw();
+  const int slot = ImguiDrawSlots::active();
+  if (handle == 0 || slot < 0) {
+    tempQueueSubmitFunc(queue, num_commands, handles);
+    return;
+  }
+  if (num_commands < 0) {
+    ImguiDrawSlots::discardUnsubmitted(slot, nvnDevice);
+    tempQueueSubmitFunc(queue, num_commands, handles);
+    return;
+  }
+
+  const size_t bytes = (static_cast<size_t>(num_commands) + 1u) * sizeof(nvn::CommandHandle);
+  void *new_handles = malloc(bytes);
+  if (new_handles == nullptr) {
+    ImguiDrawSlots::discardUnsubmitted(slot, nvnDevice);
+    tempQueueSubmitFunc(queue, num_commands, handles);
+    return;
+  }
+  if (num_commands > 0) {
+    memcpy(new_handles, handles, static_cast<size_t>(num_commands) * sizeof(nvn::CommandHandle));
+  }
+  static_cast<nvn::CommandHandle *>(new_handles)[num_commands] = handle;
+  tempQueueSubmitFunc(queue, num_commands + 1, static_cast<nvn::CommandHandle *>(new_handles));
+  free(new_handles);
+  ImguiDrawSlots::fenceAfterSubmit(slot, queue);
 }
 
 void acquireTexture(nvn::Window * window, nvn::Sync * texture_avaliable_sync, int * texture_index){
@@ -304,7 +327,6 @@ nvn::CommandHandle nvnImGui::procDraw() {
     newFrameFunc();
   }
 
-  IS_DRAWING = true;
   ImguiNvnBackend::newFrame();
   ImGui::NewFrame();
 
@@ -315,7 +337,6 @@ nvn::CommandHandle nvnImGui::procDraw() {
   }
 
   ImGui::Render();
-  IS_DRAWING = false;
 
   return ImguiNvnBackend::renderDrawData(ImGui::GetDrawData());
 }

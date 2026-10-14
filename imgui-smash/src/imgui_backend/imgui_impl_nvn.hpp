@@ -74,6 +74,7 @@ namespace ImguiNvnBackend {
 
     MemoryBuffer *vtxBuffer;
     MemoryBuffer *idxBuffer;
+    nvn::CommandBuffer *recordingCmd = nullptr;
 
     // misc data
 
