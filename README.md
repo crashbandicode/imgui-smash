@@ -1,97 +1,115 @@
-# imgui-smash: A modified fork of imgui-xeno to get Dear ImGui backend working for Smash
+# imgui-smash (`deluxe` branch)
 
-## Current ImGUI Version: 1.92.7 WIP
+A [Dear ImGui](https://github.com/ocornut/imgui) backend on NVN for
+**Super Smash Bros. Ultimate**, forked from
+[Coolsonickirby/imgui-smash](https://github.com/Coolsonickirby/imgui-smash)
+(`main` here is upstream `bb47b205`). It is the host plugin whose exported
+functions let other Skyline plugins draw their own ImGui windows, and it is
+the renderer that [Online Deluxe](https://git.syntaxbyexample.com/intpa/ssbu-online-deluxe-rewrite)
+links statically. Dear ImGui 1.92.7 WIP.
 
-A [Dear ImGui](https://github.com/ocornut/imgui) backend that leverages NVN to support and target Super Smash Bros. Ultimate specifically (will probably also work with other games that imgui-xeno doesn't work with.)
+## What the `deluxe` branch changes
 
-This is specifically the main host plugin build that exports API functions which other plugins can then use to create their own ImGUI windows.
+- **Renderer correction.** Per-slot command and control storage with fence
+  checks and a frame guard, so a frame that is still in flight is never
+  overwritten (the double-image and flicker fix measured in Deluxe's
+  `docs/VALIDATION.md`).
+- **Smaller budgets.** One 64 KiB command page and 16 KiB of control memory
+  per draw slot; the unused default fonts, the demo window and the debug tools
+  are compiled out.
+- **Standalone companion crate.** No `imgui-api` dependency; `build.rs` links
+  only an archive whose size and SHA-256 match its pin, and the archive is
+  built deterministically in a pinned devkitA64 image
+  (`deterministic-archive.cmake`).
+- **Releases carry both artifacts.** `libimgui_smash.nro` (the standalone
+  host) and `libimgui_smash.a` (the archive Deluxe links). The pinned pair
+  for each Deluxe version is recorded in Deluxe's `docs/IMGUI_DEPENDENCY.md`.
 
-## Installing (Plugin User)
-To install the imgui-smash host plugin, ensure you have [skyline](https://github.com/skyline-dev/skyline/releases/tag/beta) set up, then do the following:
-- Download `libimgui_smash.nro` from the releases
-- Place the plugin in `sd:/atmosphere/contents/<Title ID>/romfs/skyline/plugins` (where `<Title ID>` is the game you want to install it for, for example, Smash Ultimate would be `01006A800016E000`)
+## Installing the host (plugin user)
 
-Once installed, if no other plugins use imgui-smash, then nothing noticable will happen in-game.
+Only needed when another plugin draws its own windows (for example Elite Legal
+Stages). Deluxe alone does not need it: it carries the renderer inside its own
+NRO and reuses this host only when a compatible one is present.
 
-## Usage (Plugin Developer)
-To use imgui-smash in your plugin, do the following:
-- Download `libimgui_smash.a` from the releases
-- Create a new folder at the root of your plugin folder called `lib`, and put the downloaded file in there
-- Create a new file called `build.rs`, and paste the following in:
-```rust
-fn main() {
-    let proj_dir = env!("CARGO_MANIFEST_DIR");
+- Download `libimgui_smash.nro` from the release.
+- Place it in `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
 
-    println!("cargo:rerun-if-changed={}/lib/", proj_dir);
-    println!("cargo:rustc-link-search={}/lib/", proj_dir);
-}
-```
-- Add the following to your `lib.rs` file:
-```rust
-#[link(name = "imgui_smash")]
-extern "C" {}
-```
-- Add the following to your crate dependencies
-```toml
-imgui-api = { git = "https://github.com/Coolsonickirby/imgui-api" }
-```
-- Lastly, add the following to your `lib.rs` file:
-```rust
-use imgui_api::bindings::*;
+With no plugin using it, nothing visible happens in game.
 
-unsafe extern "C" fn setup_imgui_context(imgui_ctx: *mut u64){
-    igSetCurrentContext(imgui_ctx as _);
-}
+## Plugging in (plugin developer)
 
-pub fn main() { // Make sure to just add these lines in YOUR main function instead of overwriting your main function
-    unsafe {
-        imgui_api::imgui_setup_context(setup_imgui_context);
-    }
-}
-```
+Two separate doors:
 
-This will set up your plugin to allow you to create ImGUI windows. You can check out an example on the [Gist](https://gist.github.com/Coolsonickirby/89f2a895b0e06177cbbfd21523b0ac3e).
+| You want | Use |
+| --- | --- |
+| Rows in Online Deluxe's menu (toggles, modes, status) with no UI code | Deluxe's plugin API and Rust SDK: [docs/PLUGINS.md](https://git.syntaxbyexample.com/intpa/ssbu-online-deluxe-rewrite/src/branch/main/docs/PLUGINS.md) |
+| Your own Dear ImGui windows | this host, below |
 
-## Compiling
-(Recommend using Linux directly or WSL for compiling this plugin)
+To draw your own windows, link the host's exports and set up the context from
+your `main`:
 
-To compile, install:
-- [devkitpro](https://devkitpro.org/wiki/Getting_Started)
-- the switch toolchain (switch-dev)
-- CMake
-- [Rust & Cargo](https://rust-lang.org/tools/install/)
-- cargo-skyline (`cargo install cargo-skyline`)
-- cargo-skyline-std (`cargo skyline update-std`)
+- Download `libimgui_smash.a` from the release into `lib/` in your crate and
+  add a `build.rs`:
 
-After all that, run the `make` command. The host plugin will be built to `./target/aarch64-skyline-switch/release`.
+  ```rust
+  fn main() {
+      let proj_dir = env!("CARGO_MANIFEST_DIR");
+      println!("cargo:rerun-if-changed={}/lib/", proj_dir);
+      println!("cargo:rustc-link-search={}/lib/", proj_dir);
+  }
+  ```
 
-### `deluxe` branch (SSBU Online Deluxe fork)
+- In `lib.rs`:
 
-The `deluxe` branch replaces the Makefile and `bind.sh` with `Build-Standalone.ps1`
-and drops the `imgui-api` dependency. `build.rs` links only an archive whose size and
-SHA-256 match its pin.
+  ```rust
+  #[link(name = "imgui_smash")]
+  extern "C" {}
+  ```
+
+- Depend on the bindings and register your context callback:
+
+  ```toml
+  imgui-api = { git = "https://github.com/Coolsonickirby/imgui-api" }
+  ```
+
+  ```rust
+  use imgui_api::bindings::*;
+
+  unsafe extern "C" fn setup_imgui_context(imgui_ctx: *mut u64) {
+      igSetCurrentContext(imgui_ctx as _);
+  }
+
+  pub fn main() {
+      unsafe { imgui_api::imgui_setup_context(setup_imgui_context); }
+  }
+  ```
+
+The host NRO exports the same symbols as upstream (`src/lib.rs`):
+`imgui_smash_add_on_pre_init_wrapper`, `imgui_smash_add_on_new_frame_wrapper`,
+`imgui_smash_add_on_draw_frame_wrapper`, `imgui_smash_show_mouse_wrapper`,
+`imgui_setup_context_export`, `imgui_get_context_export`, and a no-op
+`imgui_show_demo_window_wrapper` (the demo is compiled out). Upstream's
+[example gist](https://gist.github.com/Coolsonickirby/89f2a895b0e06177cbbfd21523b0ac3e)
+shows a window drawn from the new-frame callback.
+
+## Building
+
+Requirements: Docker (for the pinned devkitA64 image), Rust with
+`cargo-skyline` and `cargo skyline update-std`, PowerShell 7.
 
 ```text
-pwsh ./Build-Standalone.ps1 -Action archive   # pinned devkitA64 image -> lib/cmake-build/libimgui_smash.a
-pwsh ./Build-Standalone.ps1 -Action skyline   # cargo skyline build --release
+pwsh ./Build-Standalone.ps1 -Action archive   # deterministic libimgui_smash.a -> lib/cmake-build
+pwsh ./Build-Standalone.ps1 -Action clippy    # cargo skyline clippy
+pwsh ./Build-Standalone.ps1 -Action skyline   # cargo skyline build --release -> target/aarch64-skyline-switch/release
 ```
 
+`build.rs` refuses an archive whose size or SHA-256 differs from its pin.
+Optional diagnostic features: `frame-guard-stats`, `draw-stats`. The upstream
+`main` branch keeps the original Makefile flow.
+
 ## Credits
-- [Coolsonickirby](https://github.com/Coolsonickirby) - Modified imgui-xeno to work with Smash & Created Host Plugin
-- [blujay](https://github.com/blu-dev) - Input Visualizer mod was used as reference for understanding nvn and nvn rendering implementation
-- [imgui](https://github.com/ocornut/imgui) - The backbone of this whole thing
-- [cimgui](https://github.com/cimgui/cimgui) - Used to create the C API for current ImGUI version
-- [bindgenrs](https://github.com/rust-lang/rust-bindgen) - Used to create the bindings from the API
 
-## Original repo credits
-
-- [CraftyBoss](https://github.com/CraftyBoss/MP1R-Exlaunch-Base) - thanks for the base <3
-- [exlaunch](https://github.com/shadowninja108/exlaunch/)
-- [exlaunch-cmake](https://github.com/EngineLessCC/exlaunch-cmake/)
-- [BDSP](https://github.com/Martmists-GH/BDSP)
-- [Sanae](https://github.com/Sanae6)
-- [Atmosphère](https://github.com/Atmosphere-NX/Atmosphere)
-- [oss-rtld](https://github.com/Thog/oss-rtld)
-- [roccodev](https://github.com/roccodev)
-- [BlockBuilder57](https://github.com/BlockBuilder57)
-- [AlexCSDev](https://github.com/AlexCSDev)
+- [Coolsonickirby](https://github.com/Coolsonickirby): modified imgui-xeno to work with Smash and created the host plugin
+- [blujay](https://github.com/blu-dev): Input Visualizer mod, the reference for the NVN rendering implementation
+- [imgui](https://github.com/ocornut/imgui), [cimgui](https://github.com/cimgui/cimgui), [bindgen](https://github.com/rust-lang/rust-bindgen)
+- Original base: [CraftyBoss](https://github.com/CraftyBoss/MP1R-Exlaunch-Base), [exlaunch](https://github.com/shadowninja108/exlaunch/), [exlaunch-cmake](https://github.com/EngineLessCC/exlaunch-cmake/), [BDSP](https://github.com/Martmists-GH/BDSP), [Sanae](https://github.com/Sanae6), [Atmosphère](https://github.com/Atmosphere-NX/Atmosphere), [oss-rtld](https://github.com/Thog/oss-rtld), [roccodev](https://github.com/roccodev), [BlockBuilder57](https://github.com/BlockBuilder57), [AlexCSDev](https://github.com/AlexCSDev)
