@@ -981,6 +981,8 @@ extern "C" int imgui_smash_font_stats(ImguiSmashFontStats *out) {
   out->atlasHeight = ImguiNvnBackend::g_atlasHeight.load(std::memory_order_relaxed);
   out->atlasBytesPerPixel = ImguiNvnBackend::g_atlasBytesPerPixel.load(std::memory_order_relaxed);
   out->texturesLive = ImguiNvnBackend::g_texturesLive.load(std::memory_order_relaxed);
+  out->indexPaged = fonts.indexPaged ? 1u : 0u;
+  out->indexPages = static_cast<uint32_t>(fonts.indexPages);
   out->pixelBytes = ImguiNvnBackend::g_pixelBytes.load(std::memory_order_relaxed);
   out->poolBytes = ImguiNvnBackend::g_poolBytes.load(std::memory_order_relaxed);
   out->creates = ImguiNvnBackend::g_creates.load(std::memory_order_relaxed);
@@ -994,4 +996,9 @@ extern "C" int imgui_smash_font_dynamic_set(uint32_t *out, uint32_t cap) {
     return 0;
   }
   return ImguiFontSetup::dynamicSet(out, cap > 0x7fffffffu ? 0x7fffffff : static_cast<int>(cap));
+}
+
+extern "C" int imgui_smash_font_use_paged_index(int enabled) {
+  ImguiFontSetup::usePagedIndex(enabled != 0);
+  return 1;
 }

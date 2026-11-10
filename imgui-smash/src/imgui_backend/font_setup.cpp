@@ -11,8 +11,7 @@
 namespace ImguiFontSetup {
 namespace {
 
-// imgui_draw.cpp's IM_FONTGLYPH_INDEX_UNUSED and IM_FONTGLYPH_INDEX_NOT_FOUND (file-local macros there).
-constexpr ImU16 kIndexUnused = 0xFFFF;
+// imgui_draw.cpp's IM_FONTGLYPH_INDEX_NOT_FOUND (a file-local macro there).
 constexpr ImU16 kIndexNotFound = 0xFFFE;
 // A static glyph, or a dynamic one without pixels: not tracked on screen.
 constexpr int kUntracked = -2;
@@ -32,6 +31,10 @@ std::atomic<long long> g_refusals{0};
 std::atomic<long long> g_rebuilds{0};
 std::atomic<long long> g_misplaced{0};
 std::atomic<long long> g_indexBytes{0};
+std::atomic<int> g_indexPages{0};
+// Set before setup(): bakes keep ImGui's per-codepoint index in 256-codepoint pages (ImFontAtlasFlags_PagedCodepointIndex).
+std::atomic<bool> g_pagedIndex{false};
+std::atomic<bool> g_bakePaged{false};
 
 // The dynamic set as of the last frameBoundary(), behind a sequence counter (odd while written).
 std::atomic<unsigned> g_snapshotSeq{0};
@@ -257,28 +260,31 @@ void rebuild(ImFontAtlas *atlas, ImFontBaked *baked) {
     kept.push_back(glyph);
     top = std::max(top, static_cast<unsigned int>(glyph.Codepoint));
   }
-  // Index sized to the static set; dynamic entries, "not found" marks included, are gone.
-  const int size = static_cast<int>(top) + 1;
-  ImVector<float> advance;
-  ImVector<ImU16> lookup;
-  advance.reserve(size);
-  lookup.reserve(size);
-  advance.resize(size, -1.0f);
-  lookup.resize(size, kIndexUnused);
-  const int carried = std::min(size, baked->IndexLookup.Size);
-  for (int c = 0; c < carried; ++c) {
-    if (baked->IndexLookup[c] == kIndexNotFound) {
-      lookup[c] = kIndexNotFound;
-      advance[c] = baked->IndexAdvanceX[c];
+  // The index keeps the static set's entries and the "not found" marks up to its top codepoint; dynamic entries are
+  // gone. Rebuilt through ImGui's setter (dense or paged), the highest codepoint first so a dense index is allocated
+  // once at its final size.
+  ImVector<unsigned int> missing;
+  ImVector<float> missingAdvance;
+  for (unsigned int c = 0; c <= top; ++c) {
+    if (baked->IndexGetLookup(c) == kIndexNotFound) {
+      missing.push_back(c);
+      missingAdvance.push_back(baked->IndexGetAdvanceX(c));
     }
   }
-  for (int k = 0; k < kept.Size; ++k) {
-    lookup[static_cast<int>(kept[k].Codepoint)] = static_cast<ImU16>(k);
-    advance[static_cast<int>(kept[k].Codepoint)] = kept[k].AdvanceX;
-  }
   baked->Glyphs.swap(kept);
-  baked->IndexLookup.swap(lookup);
-  baked->IndexAdvanceX.swap(advance);
+  baked->IndexLookup.clear();
+  baked->IndexAdvanceX.clear();
+  int highest = 0;
+  for (int k = 0; k < baked->Glyphs.Size; ++k) {
+    highest = baked->Glyphs[k].Codepoint > baked->Glyphs[highest].Codepoint ? k : highest;
+  }
+  for (int n = 0; n < baked->Glyphs.Size; ++n) {
+    const int k = n == 0 ? highest : (n == highest ? 0 : n);
+    ImFontAtlasBakedSetIndex(baked, baked->Glyphs[k].Codepoint, baked->Glyphs[k].AdvanceX, k);
+  }
+  for (int n = 0; n < missing.Size; ++n) {
+    ImFontAtlasBakedSetIndex(baked, missing[n], missingAdvance[n], kIndexNotFound);
+  }
   baked->FallbackGlyphIndex = fallback;
   ImFontAtlasTextureCompact(atlas);
   g_seen.resize(0);
@@ -304,16 +310,19 @@ void trimCapacity(ImVector<T> *vector) {
 
 void publish(const ImFontBaked *baked, bool force) {
   long long index = 0;
-  int dynamic = 0, visible = 0;
+  int dynamic = 0, visible = 0, pages = 0;
   if (baked != nullptr) {
     index = static_cast<long long>(baked->Glyphs.Capacity) * static_cast<long long>(sizeof(ImFontGlyph)) +
             static_cast<long long>(baked->IndexLookup.Capacity) * static_cast<long long>(sizeof(ImU16)) +
             static_cast<long long>(baked->IndexAdvanceX.Capacity) * static_cast<long long>(sizeof(float));
+    pages = baked->IndexPaged ? baked->IndexAdvanceX.Size / IM_FONTBAKED_INDEX_PAGE_SIZE : 0;
     for (int i = 0; i < g_seen.Size; ++i) {
       visible += (g_seen[i] >= 0 && g_boundary - g_seen[i] < g_limits.graceFrames) ? 1 : 0;
     }
+    g_bakePaged.store(baked->IndexPaged != 0, std::memory_order_relaxed);
   }
   g_indexBytes.store(index, std::memory_order_relaxed);
+  g_indexPages.store(pages, std::memory_order_relaxed);
   g_dynamicVisible.store(visible, std::memory_order_relaxed);
   const int glyphs = baked != nullptr ? baked->Glyphs.Size : 0;
   if (!force && glyphs == g_snapshotGlyphs) {
@@ -403,7 +412,15 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   g_rebuilds.store(0, std::memory_order_relaxed);
   g_misplaced.store(0, std::memory_order_relaxed);
   g_snapshotCount.store(0, std::memory_order_relaxed);
+  g_indexPages.store(0, std::memory_order_relaxed);
+  g_bakePaged.store(false, std::memory_order_relaxed);
 
+  // Before the first bake: a bake takes its index mode from the atlas when it is created.
+  if (g_pagedIndex.load(std::memory_order_relaxed)) {
+    atlas->Flags |= ImFontAtlasFlags_PagedCodepointIndex;
+  } else {
+    atlas->Flags &= ~ImFontAtlasFlags_PagedCodepointIndex;
+  }
   atlas->TexDesiredFormat = ImTextureFormat_Alpha8;
   atlas->TexMinWidth = limits.texMinWidth;
   atlas->TexMinHeight = limits.texMinHeight;
@@ -534,7 +551,10 @@ Stats stats() {
           g_dynamicGlyphs.load(std::memory_order_relaxed),  g_dynamicVisible.load(std::memory_order_relaxed),
           g_dynamicLoads.load(std::memory_order_relaxed),   g_refusals.load(std::memory_order_relaxed),
           g_rebuilds.load(std::memory_order_relaxed),       g_misplaced.load(std::memory_order_relaxed),
-          g_indexBytes.load(std::memory_order_relaxed)};
+          g_indexBytes.load(std::memory_order_relaxed),     g_bakePaged.load(std::memory_order_relaxed),
+          g_indexPages.load(std::memory_order_relaxed)};
 }
+
+void usePagedIndex(bool enabled) { g_pagedIndex.store(enabled, std::memory_order_relaxed); }
 
 }  // namespace ImguiFontSetup

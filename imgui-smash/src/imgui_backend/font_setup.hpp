@@ -67,8 +67,14 @@ struct Stats {
   long long refusals;      // dynamic glyph loads the fill guard refused
   long long rebuilds;      // dynamic-set rebuilds
   long long misplaced;     // frameBoundary() calls made inside a frame (refused; always 0 in the host's frame loop)
-  long long indexBytes;    // the bake's glyph table and per-codepoint index (ImGui sizes them by the largest codepoint)
+  long long indexBytes;    // the bake's glyph table and per-codepoint index (dense: sized by the largest codepoint)
+  bool indexPaged;         // the bake's per-codepoint index is paged (usePagedIndex)
+  int indexPages;          // 256-codepoint pages of the paged index (0 when dense)
 };
+
+// Paged per-codepoint index for the bakes setup() creates (ImFontAtlasFlags_PagedCodepointIndex): 256-codepoint pages
+// where glyphs exist instead of one array up to the highest codepoint. Off by default; call before setup().
+void usePagedIndex(bool enabled);
 
 // Adds the fonts to `atlas` (empty, not locked) and rasterizes the static set. Returns the main font, or nullptr
 // when it could not be added.

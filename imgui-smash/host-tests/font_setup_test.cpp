@@ -31,12 +31,50 @@ using ImguiFontSetup::Limits;
 using ImguiFontSetup::SharedFont;
 
 int g_failures = 0;
+// Every test runs twice: with ImGui's dense per-codepoint index, then with the paged one (usePagedIndex).
+bool g_paged = false;
 
 void expect(bool condition, const char *name) {
   if (!condition) {
-    std::fprintf(stderr, "FAIL %s\n", name);
+    std::fprintf(stderr, "FAIL [%s] %s\n", g_paged ? "paged" : "dense", name);
     g_failures += 1;
   }
+}
+
+// Per mode (0 dense, 1 paged), from test_index_bytes_by_language: stats().indexBytes (glyph table and codepoint
+// index), the codepoint index alone and its pages, for Latin text, the kana label, and Hangul and kanji together.
+constexpr int kScreens = 3;
+const char *const kScreenNames[kScreens] = {"Latin only", "the kana label", "Hangul and kanji together"};
+long long g_bytes[2][kScreens] = {};
+long long g_codepointBytes[2][kScreens] = {};
+int g_pages[2][kScreens] = {};
+
+// Per mode, from test_frame_boundary_rule: what the bake's index answers for every codepoint, and its glyph table,
+// after 400 frames of name changes and their rebuilds.
+std::vector<std::pair<ImU16, float>> g_logical[2];
+std::vector<float> g_glyphTable[2];
+
+std::vector<std::pair<ImU16, float>> logicalIndex(const ImFontBaked *baked) {
+  std::vector<std::pair<ImU16, float>> out;
+  for (unsigned c = 0; c <= IM_UNICODE_CODEPOINT_MAX; ++c) {
+    out.emplace_back(baked->IndexGetLookup(c), baked->IndexGetAdvanceX(c));
+  }
+  return out;
+}
+
+std::vector<float> glyphTable(const ImFontBaked *baked) {
+  std::vector<float> out;
+  for (const ImFontGlyph &g : baked->Glyphs) {
+    out.insert(out.end(), {static_cast<float>(g.Codepoint), static_cast<float>(g.Visible), g.AdvanceX, g.X0, g.Y0,
+                           g.X1, g.Y1, g.U0, g.V0, g.U1, g.V1});
+  }
+  return out;
+}
+
+// The paged index's page map: IndexLookup's first IM_FONTBAKED_INDEX_PAGE_COUNT entries.
+bool pageAllocated(const ImFontBaked *baked, unsigned page) {
+  return baked->IndexPaged && baked->IndexLookup.Size >= IM_FONTBAKED_INDEX_PAGE_COUNT &&
+         baked->IndexLookup[static_cast<int>(page)] != 0;
 }
 
 const char *const kLabel = "Æsir テスト";
@@ -480,7 +518,8 @@ void test_glyphs_that_left_are_dropped(const std::vector<unsigned char> &fixture
     frame({a});
   }
   const long long withA = livePacked();
-  const int indexWithA = bake(overlay.font)->IndexLookup.Size;
+  const long long indexWithA = ImguiFontSetup::stats().indexBytes;
+  const bool kanjiPage = pageAllocated(bake(overlay.font), 0x4E);
   const ImTextureData *texWithA = ImGui::GetIO().Fonts->TexData;
   for (int f = 0; f < 12; ++f) {
     frame({b});
@@ -490,14 +529,19 @@ void test_glyphs_that_left_are_dropped(const std::vector<unsigned char> &fixture
   for (unsigned c : dynamicOf(a)) {
     stillLoaded += baked->IsGlyphLoaded(static_cast<ImWchar>(c)) ? 1 : 0;
   }
-  std::printf("dropped: packed %lld px static, %lld with 40 kanji, %lld after they left; index %d -> %d entries\n",
-              staticPacked, withA, livePacked(), indexWithA, baked->IndexLookup.Size);
+  std::printf("dropped: packed %lld px static, %lld with 40 kanji, %lld after they left; index %lld -> %lld B\n",
+              staticPacked, withA, livePacked(), indexWithA, ImguiFontSetup::stats().indexBytes);
   expect(ImguiFontSetup::stats().rebuilds == 1, "one rebuild");
   expect(stillLoaded == 0, "none of A's glyphs is loaded any more");
   expect(baked->Glyphs.Size == staticGlyphs + static_cast<int>(dynamicOf(b).size()),
          "the glyph table holds the static set and B only");
   expect(livePacked() < withA && livePacked() < staticPacked + 4 * 800, "their atlas space is reclaimed");
-  expect(baked->IndexLookup.Size <= static_cast<int>(*dynamicOf(b).rbegin()) + 1, "the index shrank to B's range");
+  if (g_paged) {
+    expect(kanjiPage && !pageAllocated(baked, 0x4E) && pageAllocated(baked, 0x04),
+           "the kanji's index page is freed, B's allocated");
+  } else {
+    expect(baked->IndexLookup.Size <= static_cast<int>(*dynamicOf(b).rbegin()) + 1, "the index shrank to B's range");
+  }
   expect(ImGui::GetIO().Fonts->TexData != texWithA, "the rebuild repacked into a new texture");
   expect(allOwn(overlay.font, b.c_str()) && allOwn(overlay.font, kLabel), "what is on screen still draws right");
 }
@@ -550,6 +594,8 @@ void test_frame_boundary_rule(const std::vector<unsigned char> &fixture) {
   expect(oldAtlas == 0, "after a rebuild every frame draws from the new texture, never the one being retired");
   expect(wrongGlyphs == 0, "every frame's names drew their own glyphs");
   expect(maxTextures <= 4, "the atlas texture and the ones awaiting the backend, no more");
+  g_logical[g_paged ? 1 : 0] = logicalIndex(bake(overlay.font));
+  g_glyphTable[g_paged ? 1 : 0] = glyphTable(bake(overlay.font));
   g_destroyDelay = 0;
 }
 
@@ -596,10 +642,22 @@ void test_bounded_bytes(const std::vector<unsigned char> &fixture) {
   expect(peakDynamic[1] <= 3 + 2 * 6, "at most the label and two names' glyphs at a time");
   expect(peakGlyphs[1] <= stats.staticGlyphs + 3 + 2 * 6, "the glyph table does not grow");
   expect(peakPixels[1] <= peakPixels[0], "texture memory in the second half no higher than in the first");
-  // ImGui's index has an entry per codepoint up to the largest one loaded (here U+D55C); frameBoundary() trims the
-  // spare capacity ImGui's growth leaves.
-  const long long indexBound = (0xD55CLL + 1) * 6 + 16 * 1024;
-  expect(peakIndex[0] <= indexBound && peakIndex[1] <= indexBound, "index memory stays within the largest codepoint's");
+  // Dense: an index entry per codepoint up to the largest one loaded (here U+D55C); frameBoundary() trims the spare
+  // capacity ImGui's growth leaves. Paged: the page map and one 256-codepoint page per block the names use. Both plus
+  // the glyph table.
+  long long indexBound = (0xD55CLL + 1) * 6 + 16 * 1024;
+  if (g_paged) {
+    std::set<unsigned> pages = {0x00, 0x01};
+    for (unsigned c : pool) {
+      pages.insert(c >> 8);
+    }
+    for (unsigned c : dynamicOf(kLabel)) {
+      pages.insert(c >> 8);
+    }
+    indexBound = IM_FONTBAKED_INDEX_PAGE_COUNT * 2 + static_cast<long long>(pages.size()) * 256 * 6 + 24 * 1024;
+    std::printf("bounded: paged bound %lld B (%zu pages possible)\n", indexBound, pages.size());
+  }
+  expect(peakIndex[0] <= indexBound && peakIndex[1] <= indexBound, "index memory stays within its bound");
   expect(peakPixels[1] <= 3 * 512 * 256, "at most the current atlas and textures awaiting destruction");
   expect(allOwn(overlay.font, kLabel) && allOwn(overlay.font, name.c_str()), "the last frame draws right");
 }
@@ -620,6 +678,37 @@ void test_atlas_memory_with_the_label(const std::vector<unsigned char> &fixture)
   expect(tex->Format == ImTextureFormat_Alpha8, "the atlas is Alpha8");
   expect(bytes <= legacy / 2, "with the static set and the label, at most half of the legacy atlas");
   expect(stats.dynamicGlyphs == 3, "the label's three kana are the dynamic set");
+}
+
+// stats().indexBytes (the figure renderer-status.txt reports: the glyph table and the per-codepoint index) for three
+// screens in turn, the previous screen's names dropped first: Latin text, the kana label, a Hangul and a kanji name
+// together. main() sets the two modes side by side.
+void test_index_bytes_by_language(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  const std::vector<std::string> screens[kScreens] = {
+      {"Opp: LLUltra | 4 (12ms)"}, {"Opp: Æsir テスト | 4 (12ms)"}, {"Opp: 강철무사 | 4 (12ms)", "日本語のなまえ"}};
+  const int mode = g_paged ? 1 : 0;
+  for (int i = 0; i < kScreens; ++i) {
+    for (int f = 0; f < 14; ++f) {
+      frame(screens[i]);
+    }
+    const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+    const ImFontBaked *baked = bake(overlay.font);
+    std::set<unsigned> want;
+    for (const std::string &line : screens[i]) {
+      want = unite(want, dynamicOf(line));
+    }
+    g_bytes[mode][i] = stats.indexBytes;
+    g_codepointBytes[mode][i] = static_cast<long long>(baked->IndexLookup.Capacity) * 2 +
+                                static_cast<long long>(baked->IndexAdvanceX.Capacity) * 4;
+    g_pages[mode][i] = stats.indexPages;
+    expect(stats.indexPaged == g_paged, "the bake's index mode is the one asked for");
+    expect(dynamicSet() == want, "the screen's names are the dynamic set");
+    if (g_paged) {
+      expect(g_codepointBytes[mode][i] == IM_FONTBAKED_INDEX_PAGE_COUNT * 2 + stats.indexPages * 256 * 6,
+             "the paged index is the page map and its pages, nothing more");
+    }
+  }
 }
 
 void test_other_sizes_scale_the_one_bake(const std::vector<unsigned char> &fixture) {
@@ -716,22 +805,43 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "font files not readable\n");
     return 2;
   }
-  test_validation_accepts_fonts_and_rejects_anything_else(fixture, jetbrains);
-  test_main_font_alone_draws_question_marks_for_the_name();
-  test_static_set_is_built_once_and_kept(fixture);
-  test_shared_fonts_draw_each_character_of_the_names(fixture);
-  test_fallback_prefers_the_replacement_glyph(fixture, jetbrains);
-  test_ascii_glyphs_match_the_legacy_atlas(fixture);
-  test_dynamic_set_is_the_visible_set(fixture);
-  test_rebuild_only_when_the_screen_changes(fixture);
-  test_glyphs_that_left_are_dropped(fixture);
-  test_frame_boundary_rule(fixture);
-  test_bounded_bytes(fixture);
-  test_atlas_memory_with_the_label(fixture);
-  test_other_sizes_scale_the_one_bake(fixture);
-  test_fill_guard_keeps_packing_inside_the_largest_atlas(fixture);
-  test_without_the_fill_guard_imgui_aborts(fixture);
-  test_default_limits_drop_a_name_within_about_a_second(fixture);
+  for (const bool paged : {false, true}) {
+    g_paged = paged;
+    ImguiFontSetup::usePagedIndex(paged);
+    std::printf("== %s per-codepoint index\n", paged ? "paged" : "dense");
+    test_validation_accepts_fonts_and_rejects_anything_else(fixture, jetbrains);
+    test_main_font_alone_draws_question_marks_for_the_name();
+    test_static_set_is_built_once_and_kept(fixture);
+    test_shared_fonts_draw_each_character_of_the_names(fixture);
+    test_fallback_prefers_the_replacement_glyph(fixture, jetbrains);
+    test_ascii_glyphs_match_the_legacy_atlas(fixture);
+    test_dynamic_set_is_the_visible_set(fixture);
+    test_rebuild_only_when_the_screen_changes(fixture);
+    test_glyphs_that_left_are_dropped(fixture);
+    test_frame_boundary_rule(fixture);
+    test_bounded_bytes(fixture);
+    test_atlas_memory_with_the_label(fixture);
+    test_index_bytes_by_language(fixture);
+    test_other_sizes_scale_the_one_bake(fixture);
+    test_fill_guard_keeps_packing_inside_the_largest_atlas(fixture);
+    test_without_the_fill_guard_imgui_aborts(fixture);
+    test_default_limits_drop_a_name_within_about_a_second(fixture);
+  }
+  ImguiFontSetup::usePagedIndex(false);
+  g_paged = false;
+
+  // The two modes side by side.
+  expect(!g_logical[0].empty() && g_logical[0] == g_logical[1],
+         "after 400 frames of name changes and rebuilds, the paged index answers as the dense one for every codepoint");
+  expect(!g_glyphTable[0].empty() && g_glyphTable[0] == g_glyphTable[1], "and the glyph tables are identical");
+  std::printf("index bytes (stats().indexBytes: glyph table + codepoint index; codepoint index alone in brackets):\n");
+  for (int i = 0; i < kScreens; ++i) {
+    std::printf("  %-26s dense %7lld B [%7lld B]   paged %7lld B [%6lld B, %d pages]\n", kScreenNames[i],
+                g_bytes[0][i], g_codepointBytes[0][i], g_bytes[1][i], g_codepointBytes[1][i], g_pages[1][i]);
+  }
+  expect(g_bytes[1][0] <= g_bytes[0][0] + 2048, "Latin only: paged costs at most the page map and a page more");
+  expect(g_bytes[1][1] < g_bytes[0][1], "the kana label: paged is smaller");
+  expect(g_bytes[1][2] * 5 < g_bytes[0][2], "Hangul and kanji: paged is a fifth of dense or less");
   if (g_failures == 0) {
     std::printf("font_setup_test: ok\n");
   }

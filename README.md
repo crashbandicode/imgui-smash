@@ -51,6 +51,25 @@ links statically. Dear ImGui 1.92.7 WIP.
   - **Stats.** `imgui_smash_font_stats` reports the static and dynamic
     counts, rebuilds and texture and index bytes;
     `imgui_smash_font_dynamic_set` lists the dynamic set.
+- **Paged codepoint index (branch `sparse-codepoint-index`).**
+  - **The cost it removes.** Dear ImGui indexes a font's glyphs in two
+    arrays with an entry per codepoint up to the highest one loaded:
+    6 bytes per codepoint, about 330 KB once a Hangul glyph is loaded.
+  - **The patch.** `patches/imgui/0001-paged-codepoint-index.patch` (applied
+    by CMake and `host-tests/run.py` to a copy of `extern/imgui`; the
+    submodule stays upstream) adds `ImFontAtlasFlags_PagedCodepointIndex`.
+    Bakes made with it keep the index in 256-codepoint pages, allocated
+    only where glyphs are: a 512-byte page map plus 1.5 KB per page in use.
+    Every read and write of the index goes through two accessors and one
+    setter. No struct changes size or offset.
+  - **Opt-in.** `imgui_smash_font_use_paged_index(1)`, called before
+    `imgui_smash_init`, turns it on for the overlay's fonts. It is off by
+    default: a plugin built with an unpatched Dear ImGui reads the index
+    directly, so a standalone host whose context it may share stays dense.
+  - **Tests.** `paged_index_test` builds the patched and the unpatched Dear
+    ImGui. It requires identical glyphs, advances, sizes, wraps and vertices
+    from the dense and the paged index, and times `CalcTextSize`.
+    `font_setup_test` runs every overlay test in both modes.
 - **Releases carry both artifacts.** `libimgui_smash.nro` (the standalone
   host) and `libimgui_smash.a` (the archive Deluxe links). The pinned pair
   for each Deluxe version is recorded in Deluxe's `docs/IMGUI_DEPENDENCY.md`.
