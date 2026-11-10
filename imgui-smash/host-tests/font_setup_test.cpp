@@ -1,7 +1,8 @@
 // Host tests of the overlay's fonts (src/imgui_backend/font_setup.cpp) through ImGui's own text path:
-// ImGui::TextUnformatted in a window, as Deluxe draws its labels, with the backend's side of
-// ImGuiBackendFlags_RendererHasTextures honoured after each frame. A drawn character's glyph is what
-// ImFont::RenderText draws for it: baked->FindGlyph() of the codepoint ImTextCharFromUtf8 decodes.
+// ImGui::TextUnformatted in a window, as Deluxe draws its labels, in the host's frame loop (procDraw):
+// frameBoundary() with the last frame's draw data, NewFrame, the windows, Render, then the backend's side of
+// ImGuiBackendFlags_RendererHasTextures. A drawn character's glyph is what ImFont::RenderText draws for it:
+// baked->FindGlyph() of the codepoint ImTextCharFromUtf8 decodes.
 //
 // Usage: font_setup_test <host-tests/fixtures/label-fixture.ttf> <fonts/JetBrainsMonoNL-Regular.ttf>
 #include "imgui_backend/font_setup.hpp"
@@ -10,12 +11,14 @@
 #include "imgui_internal.h"
 #include "JetBrainsMonoNL-Regular.h"
 
+#include <algorithm>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -36,7 +39,9 @@ void expect(bool condition, const char *name) {
   }
 }
 
-const char *const kLabel = "Æsir テスト日本";
+const char *const kLabel = "Æsir テスト";
+// Short limits so the tests run in few frames: a glyph has left the screen after 6 frames without a draw.
+constexpr Limits kTest = {0.5f, 512, 128, 1024, 1024, 6, 1, 30};
 
 std::vector<unsigned char> readFile(const char *path) {
   std::ifstream in(path, std::ios::binary);
@@ -49,7 +54,7 @@ struct Overlay {
   ImGuiContext *context;
   ImFont *font;
 
-  explicit Overlay(std::vector<SharedFont> fonts, const Limits &limits = ImguiFontSetup::kDefaultLimits) {
+  explicit Overlay(std::vector<SharedFont> fonts, const Limits &limits = kTest) {
     context = ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -61,7 +66,11 @@ struct Overlay {
   ~Overlay() { ImGui::DestroyContext(context); }
 };
 
-// The backend's side of the texture protocol, as renderDrawData's updateTexture honours it.
+// The backend's side of the texture protocol, as renderDrawData's updateTexture honours it. A texture asked to be
+// destroyed is kept `destroyDelay` more frames, as the NVN backend keeps it while a submission may still read it.
+int g_destroyDelay = 0;
+std::set<int> g_destroyed;
+
 void honourTextures() {
   static intptr_t next = 1;
   for (ImTextureData *tex : ImGui::GetPlatformIO().Textures) {
@@ -70,7 +79,8 @@ void honourTextures() {
       tex->SetStatus(ImTextureStatus_OK);
     } else if (tex->Status == ImTextureStatus_WantUpdates) {
       tex->SetStatus(ImTextureStatus_OK);
-    } else if (tex->Status == ImTextureStatus_WantDestroy) {
+    } else if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames >= g_destroyDelay) {
+      g_destroyed.insert(tex->UniqueID);
       tex->SetTexID(ImTextureID_Invalid);
       tex->BackendUserData = nullptr;
       tex->SetStatus(ImTextureStatus_Destroyed);
@@ -78,29 +88,82 @@ void honourTextures() {
   }
 }
 
-void frame(const std::vector<std::string> &lines, float pushedSize = 0.0f) {
-  ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
+// Every font-atlas draw command of the frame names a texture the backend holds (created, not destroyed).
+bool drawDataTexturesLive() {
+  const ImDrawData *data = ImGui::GetDrawData();
+  if (data == nullptr) {
+    return true;
+  }
+  for (const ImDrawList *list : data->CmdLists) {
+    for (const ImDrawCmd &cmd : list->CmdBuffer) {
+      const ImTextureData *tex = cmd.TexRef._TexData;
+      if (tex != nullptr && (g_destroyed.count(tex->UniqueID) != 0 || tex->Status != ImTextureStatus_OK ||
+                             tex->TexID == ImTextureID_Invalid)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+struct FrameNote {
+  bool rebuiltAtBoundary = false;
+  bool changedInsideFrame = false;  // rebuild count or atlas texture changed between NewFrame and Render
+  bool texturesLive = true;
+  bool onCurrentAtlas = true;       // every font-atlas command names the atlas's current texture
+};
+
+bool drawDataOnAtlas(const ImTextureData *atlasTex) {
+  const ImDrawData *data = ImGui::GetDrawData();
+  for (const ImDrawList *list : data->CmdLists) {
+    for (const ImDrawCmd &cmd : list->CmdBuffer) {
+      if (cmd.ElemCount > 0 && cmd.TexRef._TexData != nullptr && cmd.TexRef._TexData != atlasTex) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// One frame of the host loop. `width` narrows the window to clip text; `measureOnly` lines are measured, not drawn.
+FrameNote frame(const std::vector<std::string> &lines, float pushedSize = 0.0f, float width = 1200.0f,
+                const std::vector<std::string> &measureOnly = {}) {
+  FrameNote note;
+  ImGuiIO &io = ImGui::GetIO();
+  note.rebuiltAtBoundary = ImguiFontSetup::frameBoundary(io.Fonts, ImGui::GetDrawData());
+  io.DeltaTime = 1.0f / 60.0f;
   ImGui::NewFrame();
+  const long long rebuilds = ImguiFontSetup::stats().rebuilds;
+  const ImTextureData *tex = io.Fonts->TexData;
   ImGui::SetNextWindowPos(ImVec2(0, 0));
-  ImGui::SetNextWindowSize(ImVec2(1200, 700));
-  ImGui::Begin("Opp");
+  ImGui::SetNextWindowSize(ImVec2(width, 700));
+  ImGui::Begin("Opp", nullptr, ImGuiWindowFlags_NoScrollbar);
   if (pushedSize > 0.0f) {
     ImGui::PushFont(nullptr, pushedSize);
   }
   for (const std::string &line : lines) {
     ImGui::TextUnformatted(line.c_str());
   }
+  for (const std::string &line : measureOnly) {
+    (void)ImGui::CalcTextSize(line.c_str());
+  }
   if (pushedSize > 0.0f) {
     ImGui::PopFont();
   }
   ImGui::End();
   ImGui::Render();
+  note.changedInsideFrame = ImguiFontSetup::stats().rebuilds != rebuilds || io.Fonts->TexData != tex;
+  note.onCurrentAtlas = drawDataOnAtlas(io.Fonts->TexData);
   honourTextures();
+  note.texturesLive = drawDataTexturesLive();
+  return note;
 }
+
+ImFontBaked *bake(ImFont *font) { return font->GetFontBaked(ImguiFontSetup::kFontSize); }
 
 // (codepoint decoded, codepoint of the glyph drawn for it) for each character of `utf8`.
 std::vector<std::pair<unsigned, unsigned>> drawn(ImFont *font, const char *utf8) {
-  ImFontBaked *baked = font->GetFontBaked(ImguiFontSetup::kFontSize);
+  ImFontBaked *baked = bake(font);
   std::vector<std::pair<unsigned, unsigned>> out;
   const char *s = utf8;
   const char *end = utf8 + std::strlen(utf8);
@@ -123,19 +186,61 @@ bool allOwn(ImFont *font, const char *utf8) {
   return true;
 }
 
-std::string kanji(int first, int count) {
+// The codepoints of `utf8` outside the static set (the dynamic glyphs that text needs).
+std::set<unsigned> dynamicOf(const std::string &utf8) {
+  std::set<unsigned> out;
+  const char *s = utf8.c_str();
+  const char *end = s + utf8.size();
+  while (s < end) {
+    unsigned int c = 0;
+    s += ImTextCharFromUtf8(&c, s, end);
+    if (!ImguiFontSetup::isStaticCodepoint(c)) {
+      out.insert(c);
+    }
+  }
+  return out;
+}
+
+std::set<unsigned> dynamicSet() {
+  uint32_t codepoints[256];
+  const int count = ImguiFontSetup::dynamicSet(codepoints, 256);
+  return std::set<unsigned>(codepoints, codepoints + std::max(0, std::min(count, 256)));
+}
+
+std::set<unsigned> unite(std::set<unsigned> a, const std::set<unsigned> &b) {
+  a.insert(b.begin(), b.end());
+  return a;
+}
+
+std::string utf8Of(const std::vector<unsigned> &codepoints) {
   std::string out;
-  for (int i = 0; i < count; ++i) {
+  for (unsigned c : codepoints) {
     char buf[5] = {};
-    ImTextCharToUtf8(buf, static_cast<unsigned>(0x4E00 + first + i));
+    ImTextCharToUtf8(buf, c);
     out += buf;
   }
   return out;
 }
 
+std::string kanji(int first, int count) {
+  std::vector<unsigned> codepoints;
+  for (int i = 0; i < count; ++i) {
+    codepoints.push_back(static_cast<unsigned>(0x4E00 + first + i));
+  }
+  return utf8Of(codepoints);
+}
+
 long long livePacked() {
   const ImFontAtlasBuilder *builder = ImGui::GetIO().Fonts->Builder;
   return static_cast<long long>(builder->RectsPackedSurface) - builder->RectsDiscardedSurface;
+}
+
+int texturePixelBytes() {
+  int bytes = 0;
+  for (const ImTextureData *tex : ImGui::GetIO().Fonts->TexList) {
+    bytes += tex->Pixels != nullptr ? tex->GetSizeInBytes() : 0;
+  }
+  return bytes;
 }
 
 void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<unsigned char> &fixture,
@@ -159,9 +264,9 @@ void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<u
 // The deluxe-branch setup: JetBrains Mono's ASCII subset alone. Every non-ASCII character draws '?'.
 void test_main_font_alone_draws_question_marks_for_the_name() {
   Overlay overlay({});
-  frame({kLabel, "æ Ø é"});
+  frame({"Æsir テスト日本", "æ Ø é"});
   int fallback = 0;
-  for (auto [c, glyph] : drawn(overlay.font, kLabel)) {
+  for (auto [c, glyph] : drawn(overlay.font, "Æsir テスト日本")) {
     if (c >= 0x80) {
       fallback += glyph == '?' ? 1 : 0;
     } else {
@@ -171,16 +276,55 @@ void test_main_font_alone_draws_question_marks_for_the_name() {
   expect(fallback == 6, "Æ and the five kana/kanji each draw '?' without a shared font");
 }
 
-void test_shared_font_draws_each_character_of_the_name(const std::vector<unsigned char> &fixture) {
+// The static set: rasterized in setup(), before any frame, and never rasterized again.
+void test_static_set_is_built_once_and_kept(const std::vector<unsigned char> &fixture) {
   Overlay overlay({shared(fixture)});
-  frame({kLabel, "æ Ø é Å ø", "日本語のなまえ", "한글"});
-  expect(allOwn(overlay.font, kLabel), "Æsir テスト日本 draws its own glyphs");
+  ImFontBaked *baked = bake(overlay.font);
+  const ImguiFontSetup::Stats before = ImguiFontSetup::stats();
+  int loaded = 0, latin = 0;
+  std::vector<std::pair<unsigned, ImFontGlyph>> boxes;
+  for (unsigned c = 0x20; c <= 0x17F; ++c) {
+    if (ImguiFontSetup::isStaticCodepoint(c) && baked->IsGlyphLoaded(static_cast<ImWchar>(c))) {
+      loaded += 1;
+      latin += c >= 0xA0 ? 1 : 0;
+      boxes.emplace_back(c, *baked->FindGlyph(static_cast<ImWchar>(c)));
+    }
+  }
+  std::printf("static set: %d glyphs (%d of U+00A0..U+017F the fixture maps), atlas %dx%d, %lld px packed\n",
+              before.staticGlyphs, latin, ImGui::GetIO().Fonts->TexData->Width,
+              ImGui::GetIO().Fonts->TexData->Height, livePacked());
+  expect(loaded == 95 + 126, "every ASCII character and every Latin-1/Extended-A one a font has is loaded");
+  expect(before.staticGlyphs >= loaded, "the static count covers them (plus fallback and ellipsis)");
+  expect(before.dynamicGlyphs == 0 && before.dynamicLoads == 0, "no dynamic glyph before any frame");
+  expect(baked->FindGlyph('s')->SourceIdx == 0, "ASCII comes from JetBrains Mono");
+  expect(baked->FindGlyph(0x00C6)->SourceIdx == 1, "Æ comes from the shared font");
+  expect(allOwn(overlay.font, "Æsir Ølstue Ærø Ōno Œuvre"), "European names draw from the static set");
+  // Many names come and go.
+  for (int round = 0; round < 6; ++round) {
+    for (int f = 0; f < 10; ++f) {
+      frame({kLabel, kanji(round * 8, 8)});
+    }
+  }
+  const ImguiFontSetup::Stats after = ImguiFontSetup::stats();
+  int same = 0;
+  for (const auto &[c, was] : boxes) {
+    const ImFontGlyph *now = bake(overlay.font)->FindGlyph(static_cast<ImWchar>(c));
+    same += (now->Codepoint == c && now->AdvanceX == was.AdvanceX && now->X0 == was.X0 && now->Y1 == was.Y1) ? 1 : 0;
+  }
+  expect(after.rebuilds >= 5, "the dynamic set was rebuilt as the names changed");
+  expect(same == loaded, "every static glyph is still loaded, with the same box and advance");
+  expect(after.staticGlyphs == before.staticGlyphs, "the static set did not change");
+}
+
+void test_shared_fonts_draw_each_character_of_the_names(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  frame({kLabel, "æ Ø é Å ø", "日本語のなまえ", "한글 강철무사", "Иван"});
+  expect(allOwn(overlay.font, kLabel), "Æsir テスト draws its own glyphs");
   expect(allOwn(overlay.font, "æØéÅø"), "Latin-1 draws its own glyphs");
   expect(allOwn(overlay.font, "日本語のなまえ"), "kana and kanji draw their own glyphs");
-  expect(allOwn(overlay.font, "한글"), "Hangul draws its own glyphs");
-  ImFontBaked *baked = overlay.font->GetFontBaked(ImguiFontSetup::kFontSize);
-  expect(baked->FindGlyph('s')->SourceIdx == 0, "ASCII still comes from JetBrains Mono");
-  expect(baked->FindGlyph(0x30C6)->SourceIdx == 1, "kana comes from the shared font");
+  expect(allOwn(overlay.font, "한글 강철무사"), "Hangul draws its own glyphs");
+  expect(allOwn(overlay.font, "Иван"), "Cyrillic draws its own glyphs");
+  expect(bake(overlay.font)->FindGlyph(0x30C6)->SourceIdx == 1, "kana comes from the shared font");
   // A character no source has costs that one character.
   frame({"A\xE0\xB8\x81" "B"});
   const auto thai = drawn(overlay.font, "A\xE0\xB8\x81" "B");
@@ -188,7 +332,7 @@ void test_shared_font_draws_each_character_of_the_name(const std::vector<unsigne
   expect(thai.size() == 3 && thai[1].second == '?', "U+0E01 draws the fallback glyph");
   const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
   expect(stats.sharedSources == 1 && stats.rejectedSources == 0, "one shared font merged");
-  expect(stats.admitted == 18, "each of the 18 distinct non-ASCII characters was rasterized once");
+  expect(stats.refusals == 0, "nothing refused");
 }
 
 void test_fallback_prefers_the_replacement_glyph(const std::vector<unsigned char> &fixture,
@@ -232,7 +376,7 @@ void test_ascii_glyphs_match_the_legacy_atlas(const std::vector<unsigned char> &
     ascii += static_cast<char>(c);
   }
   frame({ascii});
-  ImFontBaked *baked = overlay.font->GetFontBaked(ImguiFontSetup::kFontSize);
+  ImFontBaked *baked = bake(overlay.font);
   int same = 0;
   for (int c = 0x20; c < 0x7F; ++c) {
     const ImFontGlyph *now = baked->FindGlyph(static_cast<ImWchar>(c));
@@ -245,73 +389,283 @@ void test_ascii_glyphs_match_the_legacy_atlas(const std::vector<unsigned char> &
   expect(same == 95, "all 95 ASCII glyphs keep their legacy box and advance");
 }
 
+// The dynamic set holds what is on screen: the union of the drawn characters outside the static set.
+void test_dynamic_set_is_the_visible_set(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  const std::string a = "日本語のなまえ", b = "강철무사";
+  for (int f = 0; f < 3; ++f) {
+    frame({kLabel, a});
+  }
+  frame({kLabel, a});
+  expect(dynamicSet() == unite(dynamicOf(kLabel), dynamicOf(a)), "label and name A: their characters exactly");
+  for (int f = 0; f < 10; ++f) {
+    frame({kLabel, a, b});
+  }
+  expect(dynamicSet() == unite(unite(dynamicOf(kLabel), dynamicOf(a)), dynamicOf(b)),
+         "A and B both on screen: both sets, nothing dropped");
+  expect(ImguiFontSetup::stats().rebuilds == 0, "a name added beside another needs no rebuild");
+  for (int f = 0; f < 10; ++f) {
+    frame({kLabel, b});
+  }
+  frame({kLabel, b});
+  expect(dynamicSet() == unite(dynamicOf(kLabel), dynamicOf(b)), "A left the screen: only the label and B remain");
+  expect(ImguiFontSetup::stats().dynamicVisible == static_cast<int>(dynamicSet().size()),
+         "every dynamic glyph in the atlas is on screen");
+  // A line cut by the window edge: ImGui rasterizes the characters of a line it draws, past the edge too, so they
+  // stay with the line; only the ones drawn count as on screen, and the steady line causes no rebuild.
+  const std::string wide = kanji(100, 30);
+  for (int f = 0; f < 12; ++f) {
+    frame({wide}, 0.0f, 150.0f);
+  }
+  frame({wide}, 0.0f, 150.0f);
+  const std::set<unsigned> clipped = dynamicSet();
+  const int drawnNow = ImguiFontSetup::stats().dynamicVisible;
+  std::printf("clipped: %d of the line's %zu characters drawn in a 150 px window, %zu held\n", drawnNow,
+              dynamicOf(wide).size(), clipped.size());
+  expect(clipped == dynamicOf(wide), "the line on screen: its characters, the label's gone");
+  expect(drawnNow > 0 && drawnNow < static_cast<int>(clipped.size()), "only the drawn part counts as visible");
+  const long long rebuilds = ImguiFontSetup::stats().rebuilds;
+  for (int f = 0; f < 30; ++f) {
+    frame({wide}, 0.0f, 150.0f);
+  }
+  expect(ImguiFontSetup::stats().rebuilds == rebuilds, "a steadily clipped line causes no further rebuild");
+  expect(dynamicSet() == clipped, "and keeps the same set");
+}
+
+// Rebuilds happen when what is on screen changes, never per frame.
+void test_rebuild_only_when_the_screen_changes(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  for (int f = 0; f < 300; ++f) {
+    frame({kLabel, "Opp: 日本語のなまえ | 4 (12ms)"});
+  }
+  ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+  expect(stats.rebuilds == 0, "300 frames of the same text: no rebuild");
+  expect(stats.dynamicLoads == static_cast<long long>(unite(dynamicOf(kLabel), dynamicOf("日本語のなまえ")).size()),
+         "each dynamic glyph was rasterized once");
+  // Hidden for less than the grace period (a page flip): nothing dropped.
+  for (int f = 0; f < 3; ++f) {
+    frame({"Performance"});
+  }
+  for (int f = 0; f < 20; ++f) {
+    frame({kLabel, "Opp: 日本語のなまえ | 4 (12ms)"});
+  }
+  expect(ImguiFontSetup::stats().rebuilds == 0, "a short hide does not rebuild");
+  // Hidden for longer: one rebuild drops the names; shown again: they load again, no rebuild.
+  for (int f = 0; f < 20; ++f) {
+    frame({"Performance"});
+  }
+  expect(ImguiFontSetup::stats().rebuilds == 1, "names that left the screen: one rebuild");
+  expect(dynamicSet().empty(), "and no dynamic glyph is held while none is on screen");
+  for (int f = 0; f < 20; ++f) {
+    frame({kLabel});
+  }
+  expect(ImguiFontSetup::stats().rebuilds == 1, "the name coming back loads it, without a rebuild");
+  expect(allOwn(overlay.font, kLabel), "and it draws its own glyphs");
+  // Text measured every frame but never drawn does not keep the set rebuilding.
+  const long long rebuilds = ImguiFontSetup::stats().rebuilds;
+  for (int f = 0; f < 120; ++f) {
+    frame({kLabel}, 0.0f, 1200.0f, {"한글 강철무사"});
+  }
+  expect(ImguiFontSetup::stats().rebuilds == rebuilds, "measured-only text: no rebuild loop");
+  expect(dynamicSet() == dynamicOf(kLabel), "and measuring rasterizes nothing: only the drawn label is held");
+}
+
+// Glyphs that left the screen are gone from the atlas, the glyph table and the index after the rebuild.
+void test_glyphs_that_left_are_dropped(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  const int staticGlyphs = ImguiFontSetup::stats().staticGlyphs;
+  const long long staticPacked = livePacked();
+  const std::string a = kanji(0, 40), b = "Иван";
+  for (int f = 0; f < 4; ++f) {
+    frame({a});
+  }
+  const long long withA = livePacked();
+  const int indexWithA = bake(overlay.font)->IndexLookup.Size;
+  const ImTextureData *texWithA = ImGui::GetIO().Fonts->TexData;
+  for (int f = 0; f < 12; ++f) {
+    frame({b});
+  }
+  ImFontBaked *baked = bake(overlay.font);
+  int stillLoaded = 0;
+  for (unsigned c : dynamicOf(a)) {
+    stillLoaded += baked->IsGlyphLoaded(static_cast<ImWchar>(c)) ? 1 : 0;
+  }
+  std::printf("dropped: packed %lld px static, %lld with 40 kanji, %lld after they left; index %d -> %d entries\n",
+              staticPacked, withA, livePacked(), indexWithA, baked->IndexLookup.Size);
+  expect(ImguiFontSetup::stats().rebuilds == 1, "one rebuild");
+  expect(stillLoaded == 0, "none of A's glyphs is loaded any more");
+  expect(baked->Glyphs.Size == staticGlyphs + static_cast<int>(dynamicOf(b).size()),
+         "the glyph table holds the static set and B only");
+  expect(livePacked() < withA && livePacked() < staticPacked + 4 * 800, "their atlas space is reclaimed");
+  expect(baked->IndexLookup.Size <= static_cast<int>(*dynamicOf(b).rbegin()) + 1, "the index shrank to B's range");
+  expect(ImGui::GetIO().Fonts->TexData != texWithA, "the rebuild repacked into a new texture");
+  expect(allOwn(overlay.font, b.c_str()) && allOwn(overlay.font, kLabel), "what is on screen still draws right");
+}
+
+// The rebuild runs only between frames, through the texture requests: a new texture is created, and the old one is
+// destroyed by the backend only after the frames that sampled it.
+void test_frame_boundary_rule(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  g_destroyDelay = 2;
+  g_destroyed.clear();
+  for (int f = 0; f < 3; ++f) {
+    frame({kLabel, "日本語のなまえ"});
+  }
+  // Seeded violation: frameBoundary() placed inside a frame is refused and changes nothing.
+  ImGuiIO &io = ImGui::GetIO();
+  io.DeltaTime = 1.0f / 60.0f;
+  ImGui::NewFrame();
+  ImGui::Begin("Opp");
+  ImGui::TextUnformatted("강철무사");
+  const ImTextureData *tex = io.Fonts->TexData;
+  const int glyphs = bake(overlay.font)->Glyphs.Size;
+  for (int i = 0; i < 20; ++i) {
+    expect(!ImguiFontSetup::frameBoundary(io.Fonts, nullptr), "inside a frame, frameBoundary() does nothing");
+  }
+  ImGui::TextUnformatted(kLabel);
+  ImGui::End();
+  ImGui::Render();
+  honourTextures();
+  expect(ImguiFontSetup::stats().misplaced == 20, "each misplaced call is counted");
+  expect(io.Fonts->TexData == tex && bake(overlay.font)->Glyphs.Size >= glyphs, "and the frame's glyphs stay put");
+  // Names changing for 400 frames.
+  const char *names[] = {"日本語のなまえ", "강철무사", "Иван", "Ølstue", "テスト日本", "한글"};
+  int rebuilds = 0, insideFrame = 0, deadTextures = 0, oldAtlas = 0, wrongGlyphs = 0, maxTextures = 0;
+  for (int f = 0; f < 400; ++f) {
+    const char *name = names[(f / 25) % 6];
+    const FrameNote note = frame({kLabel, name});
+    rebuilds += note.rebuiltAtBoundary ? 1 : 0;
+    insideFrame += note.changedInsideFrame ? 1 : 0;
+    deadTextures += note.texturesLive ? 0 : 1;
+    oldAtlas += note.onCurrentAtlas ? 0 : 1;
+    wrongGlyphs += (allOwn(overlay.font, name) && allOwn(overlay.font, kLabel)) ? 0 : 1;
+    maxTextures = std::max(maxTextures, io.Fonts->TexList.Size);
+  }
+  std::printf("boundary: %d rebuilds in 400 frames, %d textures destroyed, at most %d textures held\n", rebuilds,
+              static_cast<int>(g_destroyed.size()), maxTextures);
+  expect(rebuilds >= 10, "the names that left were dropped as they changed");
+  expect(static_cast<long long>(rebuilds) == ImguiFontSetup::stats().rebuilds, "every rebuild was at a boundary");
+  expect(insideFrame == 0, "no rebuild and no texture change inside a frame");
+  expect(deadTextures == 0, "no frame drew with a texture the backend had destroyed");
+  expect(oldAtlas == 0, "after a rebuild every frame draws from the new texture, never the one being retired");
+  expect(wrongGlyphs == 0, "every frame's names drew their own glyphs");
+  expect(maxTextures <= 4, "the atlas texture and the ones awaiting the backend, no more");
+  g_destroyDelay = 0;
+}
+
+// Memory stays bounded however many names pass: the static set plus what is on screen.
+void test_bounded_bytes(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  std::vector<unsigned> pool;
+  for (unsigned c = 0x4E00; c < 0x4EA0; ++c) {
+    pool.push_back(c);
+  }
+  for (unsigned c : dynamicOf("한글강철무사日本語のなまえテストИван")) {
+    pool.push_back(c);
+  }
+  unsigned seed = 12345;
+  auto next = [&seed] {
+    seed = seed * 1103515245u + 12345u;
+    return (seed >> 16) & 0x7FFF;
+  };
+  int peakPixels[2] = {}, peakDynamic[2] = {}, peakGlyphs[2] = {};
+  long long peakIndex[2] = {};
+  std::string name;
+  for (int f = 0; f < 3000; ++f) {
+    if (f % 15 == 0) {
+      std::vector<unsigned> codepoints;
+      for (int i = 0; i < 6; ++i) {
+        codepoints.push_back(pool[next() % pool.size()]);
+      }
+      name = utf8Of(codepoints);
+    }
+    frame({kLabel, name});
+    const int half = f < 1500 ? 0 : 1;
+    const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+    peakPixels[half] = std::max(peakPixels[half], texturePixelBytes());
+    peakDynamic[half] = std::max(peakDynamic[half], stats.dynamicGlyphs);
+    peakGlyphs[half] = std::max(peakGlyphs[half], bake(overlay.font)->Glyphs.Size);
+    peakIndex[half] = std::max(peakIndex[half], stats.indexBytes);
+  }
+  const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+  std::printf("bounded: 200 names over 3000 frames, %lld rebuilds, %lld dynamic loads; peaks first/second half: "
+              "texture pixels %d/%d B, dynamic glyphs %d/%d, glyph table %d/%d, index %lld/%lld B\n",
+              stats.rebuilds, stats.dynamicLoads, peakPixels[0], peakPixels[1], peakDynamic[0], peakDynamic[1],
+              peakGlyphs[0], peakGlyphs[1], peakIndex[0], peakIndex[1]);
+  expect(stats.rebuilds >= 150, "the names that left were dropped");
+  expect(peakDynamic[1] <= 3 + 2 * 6, "at most the label and two names' glyphs at a time");
+  expect(peakGlyphs[1] <= stats.staticGlyphs + 3 + 2 * 6, "the glyph table does not grow");
+  expect(peakPixels[1] <= peakPixels[0], "texture memory in the second half no higher than in the first");
+  // ImGui's index has an entry per codepoint up to the largest one loaded (here U+D55C); frameBoundary() trims the
+  // spare capacity ImGui's growth leaves.
+  const long long indexBound = (0xD55CLL + 1) * 6 + 16 * 1024;
+  expect(peakIndex[0] <= indexBound && peakIndex[1] <= indexBound, "index memory stays within the largest codepoint's");
+  expect(peakPixels[1] <= 3 * 512 * 256, "at most the current atlas and textures awaiting destruction");
+  expect(allOwn(overlay.font, kLabel) && allOwn(overlay.font, name.c_str()), "the last frame draws right");
+}
+
 void test_atlas_memory_with_the_label(const std::vector<unsigned char> &fixture) {
   Overlay overlay({shared(fixture)});
-  frame({kLabel, "日本語のなまえ", "Opp: LLUltra | 4 (12ms)"});
+  for (int f = 0; f < 3; ++f) {
+    frame({kLabel, "Opp: LLUltra | 4 (12ms)"});
+  }
   ImTextureData *tex = ImGui::GetIO().Fonts->TexData;
   const int bytes = tex->GetSizeInBytes();
   const int legacy = 512 * 128 * 4;
-  std::printf("memory: legacy atlas 512x128 RGBA32 %d B; new atlas %dx%d bpp %d %d B; glyphs admitted %d; "
-              "live packed %lld px\n",
-              legacy, tex->Width, tex->Height, tex->BytesPerPixel, bytes, ImguiFontSetup::stats().admitted,
-              livePacked());
+  const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+  std::printf("memory: legacy atlas 512x128 RGBA32 %d B; now %dx%d bpp %d %d B; static %d glyphs, dynamic %d; "
+              "index %lld B; packed %lld px\n",
+              legacy, tex->Width, tex->Height, tex->BytesPerPixel, bytes, stats.staticGlyphs, stats.dynamicGlyphs,
+              stats.indexBytes, livePacked());
   expect(tex->Format == ImTextureFormat_Alpha8, "the atlas is Alpha8");
-  expect(bytes * 4 <= legacy, "the label's atlas is at most a quarter of the legacy one");
+  expect(bytes <= legacy / 2, "with the static set and the label, at most half of the legacy atlas");
+  expect(stats.dynamicGlyphs == 3, "the label's three kana are the dynamic set");
 }
 
 void test_other_sizes_scale_the_one_bake(const std::vector<unsigned char> &fixture) {
   Overlay overlay({shared(fixture)});
-  frame({kLabel});
+  frame({kLabel, "日本"});
   frame({kLabel}, 13.5f);
   frame({kLabel}, 22.0f);
+  for (int f = 0; f < 12; ++f) {
+    frame({"한글"}, 13.5f);
+  }
+  expect(ImguiFontSetup::stats().rebuilds >= 1, "a rebuild happened");
   expect(ImGui::GetIO().Fonts->Builder->BakedPool.Size == 1, "the compact strip's sizes add no bake");
   expect(overlay.font->GetFontBaked(13.5f)->Size == ImguiFontSetup::kFontSize, "13.5 px scales the 18 px bake");
 }
 
-void test_glyph_budget_refuses_past_the_limit(const std::vector<unsigned char> &fixture) {
-  Limits limits = ImguiFontSetup::kDefaultLimits;
-  limits.glyphBudget = 10;
-  Overlay overlay({shared(fixture)}, limits);
-  const std::string forty = kanji(0, 40);
-  frame({forty});
-  const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
-  int own = 0;
-  for (auto [c, glyph] : drawn(overlay.font, forty.c_str())) {
-    own += c == glyph ? 1 : 0;
-  }
-  expect(stats.admitted == 10, "ten shared-font glyphs admitted");
-  expect(own == 10, "the first ten kanji draw themselves");
-  expect(stats.refusals >= 30, "the other thirty were refused");
-}
-
-// The fill guard keeps packing below the largest atlas; ImGui's "Out of texture memory" assert never fires.
+// A frame whose own text would overflow the fill guard draws the fallback for the excess, then recovers.
 void test_fill_guard_keeps_packing_inside_the_largest_atlas(const std::vector<unsigned char> &fixture) {
-  const Limits limits = {1000, 0.5f, 256, 128, 256, 256};
+  const Limits limits = {0.2f, 256, 128, 512, 512, 6, 1, 30};
   Overlay overlay({shared(fixture)}, limits);
-  frame({"The quick brown fox jumps over the lazy dog 0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"});
-  const long long ascii = livePacked();
-  for (int batch = 0; batch < 8; ++batch) {
-    frame({kanji(batch * 20, 20)});
+  const std::string all = kanji(0, 160);
+  for (int f = 0; f < 3; ++f) {
+    frame({all});
   }
-  const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+  ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
   ImTextureData *tex = ImGui::GetIO().Fonts->TexData;
-  std::printf("fill guard: ascii packed %lld px, final packed %lld px of %d, admitted %d, refusals %d, atlas %dx%d\n",
-              ascii, livePacked(), 256 * 256, stats.admitted, stats.refusals, tex->Width, tex->Height);
-  expect(stats.admitted > 0 && stats.refusals > 0, "some kanji admitted, the rest refused");
-  expect(livePacked() <= 256 * 256 / 2, "packing stays at or below half of the largest atlas");
-  expect(tex->Width <= 256 && tex->Height <= 256, "the atlas never exceeds its maximum");
+  std::printf("fill guard: packed %lld px of %d, dynamic %d, refusals %lld, atlas %dx%d\n", livePacked(), 512 * 512,
+              stats.dynamicGlyphs, stats.refusals, tex->Width, tex->Height);
+  expect(stats.dynamicGlyphs > 0 && stats.refusals > 0, "some kanji drawn, the excess refused");
+  expect(livePacked() <= 512 * 512 / 5, "packing stays within the fill limit of the largest atlas");
+  expect(tex->Width <= 512 && tex->Height <= 512, "the atlas never exceeds its maximum");
+  for (int f = 0; f < 12; ++f) {
+    frame({kLabel});
+  }
+  expect(allOwn(overlay.font, kLabel), "once that text is gone, the label draws its own glyphs");
 }
 
-// 160 kanji into an atlas capped at 256x128, in a child process. Returns its wait status.
+// 160 kanji in one frame into an atlas capped at 256x256, in a child process. Returns its wait status.
 int overfill(const std::vector<unsigned char> &fixture, float fillLimit) {
   std::fflush(stdout);
   std::fflush(stderr);
   const pid_t child = fork();
   if (child == 0) {
-    const Limits limits = {1000, fillLimit, 256, 128, 256, 128};
+    const Limits limits = {fillLimit, 256, 128, 256, 256, 6, 1, 30};
     Overlay overlay({shared(fixture)}, limits);
     for (int batch = 0; batch < 8; ++batch) {
-      frame({kanji(batch * 20, 20)});
+      frame({kanji(0, 160)});
     }
     _exit(0);
   }
@@ -329,9 +683,29 @@ void test_without_the_fill_guard_imgui_aborts(const std::vector<unsigned char> &
   expect(WIFSIGNALED(unguarded) && WTERMSIG(unguarded) == SIGABRT, "without the guard the atlas overflows and aborts");
 }
 
+// The production limits: the draw data is read every fourth frame and a glyph leaves after 60 frames.
+void test_default_limits_drop_a_name_within_about_a_second(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)}, ImguiFontSetup::kDefaultLimits);
+  for (int f = 0; f < 20; ++f) {
+    frame({kLabel});
+  }
+  int when = -1;
+  for (int f = 0; f < 120; ++f) {
+    if (frame({"강철무사"}).rebuiltAtBoundary && when < 0) {
+      when = f;
+    }
+  }
+  frame({"강철무사"});
+  std::printf("default limits: the label's glyphs dropped %d frames after it left\n", when);
+  expect(when >= 56 && when <= 68, "dropped about 60 frames (one scan interval either way) after leaving");
+  expect(ImguiFontSetup::stats().rebuilds == 1, "in one rebuild");
+  expect(dynamicSet() == dynamicOf("강철무사"), "leaving the name on screen");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
   if (argc < 3) {
     std::fprintf(stderr, "usage: font_setup_test <label-fixture.ttf> <JetBrainsMonoNL-Regular.ttf>\n");
     return 2;
@@ -344,14 +718,20 @@ int main(int argc, char **argv) {
   }
   test_validation_accepts_fonts_and_rejects_anything_else(fixture, jetbrains);
   test_main_font_alone_draws_question_marks_for_the_name();
-  test_shared_font_draws_each_character_of_the_name(fixture);
+  test_static_set_is_built_once_and_kept(fixture);
+  test_shared_fonts_draw_each_character_of_the_names(fixture);
   test_fallback_prefers_the_replacement_glyph(fixture, jetbrains);
   test_ascii_glyphs_match_the_legacy_atlas(fixture);
+  test_dynamic_set_is_the_visible_set(fixture);
+  test_rebuild_only_when_the_screen_changes(fixture);
+  test_glyphs_that_left_are_dropped(fixture);
+  test_frame_boundary_rule(fixture);
+  test_bounded_bytes(fixture);
   test_atlas_memory_with_the_label(fixture);
   test_other_sizes_scale_the_one_bake(fixture);
-  test_glyph_budget_refuses_past_the_limit(fixture);
   test_fill_guard_keeps_packing_inside_the_largest_atlas(fixture);
   test_without_the_fill_guard_imgui_aborts(fixture);
+  test_default_limits_drop_a_name_within_about_a_second(fixture);
   if (g_failures == 0) {
     std::printf("font_setup_test: ok\n");
   }

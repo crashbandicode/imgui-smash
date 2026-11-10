@@ -26,19 +26,31 @@ links statically. Dear ImGui 1.92.7 WIP.
   only an archive whose size and SHA-256 match its pin, and the archive is
   built deterministically in a pinned devkitA64 image
   (`deterministic-archive.cmake`).
-- **Text beyond ASCII (branch `unicode-shared-font`).** The NVN backend honours
-  ImGui 1.92's texture requests (`ImGuiBackendFlags_RendererHasTextures`), so
-  a glyph is rasterized the first time a string draws it. JetBrains Mono's
-  ASCII subset stays the first font at 18 px; the console's system shared fonts
-  (`nn::pl`: Standard with Latin and Japanese, Chinese, Korean, Nintendo
-  Extended) are merged after it from the read-only memory the system maps, not
-  copied. The atlas is Alpha8 (an R8 texture sampled as white with that alpha),
-  512x128 to start and at most 1024x1024. At most 512 shared-font glyphs are
-  rasterized, and none once packing would pass half of the largest atlas, so
-  ImGui's "Out of texture memory" assert cannot fire; a refused or missing
-  character draws the fallback glyph (U+FFFD when a font has it) for that
-  character only. `imgui_smash_font_stats` reports the fonts, glyphs and atlas
-  bytes.
+- **Text beyond ASCII (branch `unicode-shared-font`).**
+  - **Fonts.** JetBrains Mono's ASCII subset stays the first font at 18 px.
+    The console's system shared fonts (`nn::pl`: Standard with Latin and
+    Japanese, Chinese, Korean, Nintendo Extended) are merged after it, read in
+    place from the memory the system maps, not copied.
+  - **Static set.** ASCII, Latin-1 Supplement and Latin Extended-A
+    (European names) are rasterized once at start-up and never change.
+  - **Dynamic set.** Any other character is rasterized when a string draws
+    it. Measuring text loads advances only.
+  - **Drops between frames.** Between two frames, the host reads the last
+    frame's draw data. Once a dynamic glyph that was on screen has gone about
+    a second without a draw, it drops every dynamic glyph and repacks the
+    atlas into a new texture through the backend's texture requests
+    (`ImGuiBackendFlags_RendererHasTextures`). What is still on screen loads
+    again in the next frame, so the dynamic set is the text on screen, not
+    everything ever shown.
+  - **Atlas.** Alpha8 (an R8 texture sampled as white with that alpha),
+    512x128 to start, at most 1024x1024. No dynamic glyph is rasterized once
+    packing would pass half of it, so ImGui's "Out of texture memory" assert
+    cannot fire.
+  - **Fallback.** A missing character draws the fallback glyph (U+FFFD when a
+    font has it) for that character only.
+  - **Stats.** `imgui_smash_font_stats` reports the static and dynamic
+    counts, rebuilds and texture and index bytes;
+    `imgui_smash_font_dynamic_set` lists the dynamic set.
 - **Releases carry both artifacts.** `libimgui_smash.nro` (the standalone
   host) and `libimgui_smash.a` (the archive Deluxe links). The pinned pair
   for each Deluxe version is recorded in Deluxe's `docs/IMGUI_DEPENDENCY.md`.

@@ -584,7 +584,8 @@ namespace ImguiNvnBackend {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
-    // Glyphs are rasterized when first drawn; renderDrawData honours ImGui's texture requests.
+    // The static set is rasterized at setup, other glyphs when first drawn and dropped when they leave the screen
+    // (font_setup); renderDrawData honours ImGui's texture requests.
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     ImGuiPlatformIO &platformIo = ImGui::GetPlatformIO();
     platformIo.Renderer_TextureMaxWidth = ImguiFontSetup::kDefaultLimits.texMaxWidth;
@@ -612,8 +613,8 @@ namespace ImguiNvnBackend {
         Logger::log("Failed to add the overlay font!\n");
       }
       const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
-      Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X.\n", fonts.sharedSources,
-                  fonts.rejectedSources, fonts.fallbackChar);
+      Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
+                  fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
     }
 #endif
 
@@ -967,9 +968,15 @@ extern "C" int imgui_smash_font_stats(ImguiSmashFontStats *out) {
   out->size = static_cast<uint32_t>(sizeof(ImguiSmashFontStats));
   out->sharedSources = static_cast<uint32_t>(fonts.sharedSources);
   out->rejectedSources = static_cast<uint32_t>(fonts.rejectedSources);
-  out->glyphsAdmitted = static_cast<uint32_t>(fonts.admitted);
-  out->glyphRefusals = static_cast<uint32_t>(fonts.refusals);
   out->fallbackChar = static_cast<uint32_t>(fonts.fallbackChar);
+  out->staticGlyphs = static_cast<uint32_t>(fonts.staticGlyphs);
+  out->dynamicGlyphs = static_cast<uint32_t>(fonts.dynamicGlyphs);
+  out->dynamicVisible = static_cast<uint32_t>(fonts.dynamicVisible);
+  out->dynamicLoads = static_cast<uint64_t>(fonts.dynamicLoads);
+  out->refusals = static_cast<uint64_t>(fonts.refusals);
+  out->rebuilds = static_cast<uint64_t>(fonts.rebuilds);
+  out->misplaced = static_cast<uint64_t>(fonts.misplaced);
+  out->indexBytes = static_cast<uint64_t>(fonts.indexBytes);
   out->atlasWidth = ImguiNvnBackend::g_atlasWidth.load(std::memory_order_relaxed);
   out->atlasHeight = ImguiNvnBackend::g_atlasHeight.load(std::memory_order_relaxed);
   out->atlasBytesPerPixel = ImguiNvnBackend::g_atlasBytesPerPixel.load(std::memory_order_relaxed);
@@ -980,4 +987,11 @@ extern "C" int imgui_smash_font_stats(ImguiSmashFontStats *out) {
   out->updates = ImguiNvnBackend::g_updates.load(std::memory_order_relaxed);
   out->destroys = ImguiNvnBackend::g_destroys.load(std::memory_order_relaxed);
   return 1;
+}
+
+extern "C" int imgui_smash_font_dynamic_set(uint32_t *out, uint32_t cap) {
+  if (out == nullptr && cap != 0) {
+    return 0;
+  }
+  return ImguiFontSetup::dynamicSet(out, cap > 0x7fffffffu ? 0x7fffffff : static_cast<int>(cap));
 }

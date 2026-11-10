@@ -2,9 +2,10 @@
 """Builds host-tests/fixtures/label-fixture.ttf, the stand-in for a system shared font in the host tests.
 
 Source: Noto Sans CJK JP Regular (SIL Open Font License 1.1, Debian package fonts-noto-cjk,
-/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc). The subset keeps the test strings, Hangul and the
-first 160 CJK ideographs from U+4E00 the font maps; the CFF outlines are converted to TrueType glyf (the shared fonts'
-outline format) and the family is renamed "Label Fixture".
+/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc). The subset keeps the test strings (Latin, kana, kanji,
+Hangul, Cyrillic, the ideographic space), every Latin-1 Supplement and Latin Extended-A character the font maps (the
+overlay's static set), and the first 160 CJK ideographs from U+4E00 it maps; the CFF outlines are converted to
+TrueType glyf (the shared fonts' outline format) and the family is renamed "Label Fixture".
 
 Needs fontTools (tested with 4.60.1):
   python3 -m venv /tmp/venv && /tmp/venv/bin/pip install fonttools==4.60.1
@@ -22,7 +23,8 @@ from fontTools.ttLib import TTCollection, newTable
 SOURCE = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 FAMILY = "Noto Sans CJK JP"
 OUT = Path(__file__).with_name("label-fixture.ttf")
-TEXTS = ["Æsir テスト日本", "æØéÅøÆ", "日本語のなまえ", "한글"]
+TEXTS = ["Æsir テスト日本", "æØéÅøÆ", "日本語のなまえ", "한글", "강철무사", "Иван", "\u3000"]
+STATIC = range(0xA0, 0x180)
 KANJI = 160
 
 
@@ -81,12 +83,14 @@ def rename(font):
 def main(argv):
     font = pick_font(argv[1] if len(argv) > 1 else SOURCE)
     cmap = font.getBestCmap()
-    wanted = {ord(c) for text in TEXTS for c in text if not c.isspace()}
+    wanted = {ord(c) for text in TEXTS for c in text if c != " "}
     kanji = [cp for cp in range(0x4E00, 0xA000) if cp in cmap][:KANJI]
     wanted.update(kanji)
     missing = sorted(cp for cp in wanted if cp not in cmap)
     if missing:
         raise SystemExit("source lacks " + " ".join(f"U+{cp:04X}" for cp in missing))
+    static = [cp for cp in STATIC if cp in cmap]
+    wanted.update(static)
     options = subset.Options()
     options.layout_features = []
     options.hinting = False
@@ -101,7 +105,8 @@ def main(argv):
     font.save(OUT)
     data = OUT.read_bytes()
     print(f"{OUT.name}: {len(data)} bytes sha256 {hashlib.sha256(data).hexdigest()} "
-          f"codepoints {len(wanted)} kanji U+{kanji[0]:04X}..U+{kanji[-1]:04X}")
+          f"codepoints {len(wanted)} kanji U+{kanji[0]:04X}..U+{kanji[-1]:04X} "
+          f"static U+00A0..U+017F {len(static)} of {len(STATIC)}")
 
 
 if __name__ == "__main__":

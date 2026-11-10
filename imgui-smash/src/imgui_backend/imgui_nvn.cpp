@@ -1,5 +1,6 @@
 #include "imgui_nvn.h"
 #include "DrawSlots.h"
+#include "font_setup.hpp"
 #include "frame_guard.hpp"
 #include "helpers/InputHelper.h"
 #include "helpers/memoryHelper.h"
@@ -323,6 +324,10 @@ extern "C" void imgui_smash_show_mouse(bool show_mouse) {
 }
 
 nvn::CommandHandle nvnImGui::procDraw() {
+  // Between frames: the last frame's draw lists are recorded, the next ones not started. Glyphs that left the screen
+  // are dropped here; the new atlas texture goes through renderDrawData's texture requests.
+  ImguiFontSetup::frameBoundary(ImGui::GetIO().Fonts, ImGui::GetDrawData());
+
   for (auto newFrameFunc: newFrameQueue) {
     newFrameFunc();
   }
