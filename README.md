@@ -26,6 +26,19 @@ links statically. Dear ImGui 1.92.7 WIP.
   only an archive whose size and SHA-256 match its pin, and the archive is
   built deterministically in a pinned devkitA64 image
   (`deterministic-archive.cmake`).
+- **Text beyond ASCII (branch `unicode-shared-font`).** The NVN backend honours
+  ImGui 1.92's texture requests (`ImGuiBackendFlags_RendererHasTextures`), so
+  a glyph is rasterized the first time a string draws it. JetBrains Mono's
+  ASCII subset stays the first font at 18 px; the console's system shared fonts
+  (`nn::pl`: Standard with Latin and Japanese, Chinese, Korean, Nintendo
+  Extended) are merged after it from the read-only memory the system maps, not
+  copied. The atlas is Alpha8 (an R8 texture sampled as white with that alpha),
+  512x128 to start and at most 1024x1024. At most 512 shared-font glyphs are
+  rasterized, and none once packing would pass half of the largest atlas, so
+  ImGui's "Out of texture memory" assert cannot fire; a refused or missing
+  character draws the fallback glyph (U+FFFD when a font has it) for that
+  character only. `imgui_smash_font_stats` reports the fonts, glyphs and atlas
+  bytes.
 - **Releases carry both artifacts.** `libimgui_smash.nro` (the standalone
   host) and `libimgui_smash.a` (the archive Deluxe links). The pinned pair
   for each Deluxe version is recorded in Deluxe's `docs/IMGUI_DEPENDENCY.md`.
@@ -107,6 +120,15 @@ pwsh ./Build-Standalone.ps1 -Action archive   # deterministic libimgui_smash.a -
 pwsh ./Build-Standalone.ps1 -Action clippy    # cargo skyline clippy
 pwsh ./Build-Standalone.ps1 -Action skyline   # cargo skyline build --release -> target/aarch64-skyline-switch/release
 ```
+
+Host tests (g++ with C++23; warnings are errors for this repository's code):
+
+```text
+python3 -I imgui-smash/host-tests/run.py
+```
+
+`host-tests/fixtures/label-fixture.ttf` is a TrueType subset of Noto Sans CJK
+JP (SIL OFL 1.1, `LICENSE-label-fixture.txt`), built by `make_fixture.py`.
 
 `build.rs` refuses an archive whose size or SHA-256 differs from its pin.
 Optional diagnostic features: `frame-guard-stats`, `draw-stats`. The upstream
