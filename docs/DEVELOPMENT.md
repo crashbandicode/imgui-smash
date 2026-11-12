@@ -67,8 +67,8 @@ two CPUs, 2 GiB, no container network, and deterministic `ar`/`ranlib` flags.
 It writes `lib/cmake-build/libimgui_smash.a`; Rust writes
 `target/aarch64-skyline-switch/release/libimgui_smash.nro` and the unstripped `.so`.
 
-The pinned archive is **13,861,332 bytes**, SHA-256
-`1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e`.
+The pinned archive is **13,884,166 bytes**, SHA-256
+`7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380`.
 `build.rs` checks both before linking and never downloads it. Host-only builds
 do not require the archive. The script's Cargo operations are offline; populate
 the pinned dependencies and Docker image before using it offline.
@@ -94,7 +94,7 @@ PowerShell on Linux:
 ```powershell
 $out = Join-Path ([IO.Path]::GetTempPath()) "imgui-host-tests"
 New-Item -ItemType Directory -Force $out | Out-Null
-foreach ($name in @("command_memory_reserve", "draw_slot_rules", "frame_guard", "frame_guard_concurrent", "overlay_texture_policy")) {
+foreach ($name in @("command_memory_reserve", "draw_slot_rules", "frame_guard", "frame_guard_concurrent", "nav_toggle", "overlay_texture_policy")) {
     $sources = @("host-tests/${name}_test.cpp")
     if ($name.StartsWith("frame_guard")) { $sources += "src/imgui_backend/frame_guard.cpp" }
     & g++ -std=c++23 -Wall -Wextra -Werror -pthread -I src -I src/imgui_backend -I include @sources -o "$out/$name"
@@ -116,6 +116,11 @@ from the warnings-denied focused tests and Rust Clippy gates.
   configuration. An ImGui assertion can abort the game.
 - The backend's InputHelper reads FullKey, Handheld and JoyDual pads, not
   GameCube controllers. Consumers such as Deluxe can poll their own input.
+- Gamepad navigation (L3 + R3) is off unless `sd:/ultimate/imgui_smash/config.ini`
+  sets `gamepad_nav_toggle = on` (1.0.2). The standalone reads the file in its
+  `main` and calls `imgui_smash_set_gamepad_nav_toggle` before
+  `imgui_smash_init`; another host linking the archive gets the same default
+  and can call it too.
 - Slots are reused only after a nonblocking completion check. Busy/overflowed
   draws can be skipped; these bounded budgets do not promise arbitrary UI sizes.
 

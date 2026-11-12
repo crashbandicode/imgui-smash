@@ -41,6 +41,11 @@ new release package. See [the evidence](docs/VALIDATION.md).
 - **Two artifacts, one renderer.** `libimgui_smash.nro` is the standalone
    host; `libimgui_smash.a` is the archive Deluxe links. The exact source and
    artifact identities are in the release manifest and [validation record](docs/VALIDATION.md).
+- **Bounded swapchain texture table.** At most three texture pointers are
+  copied, and the overlay draws only after a successful acquire with an index
+  inside that table (the Switch build of 2026-10-22, on `main` since 1.0.2).
+- **Gamepad navigation off by default (1.0.2).** L3 + R3 no longer toggles
+  ImGui gamepad navigation unless `config.ini` enables it (below).
 
 ## Installing the host (plugin user)
 
@@ -54,6 +59,21 @@ NRO and reuses this host only when a compatible one is present.
 
 The `.a` archive is for developers, not the SD card. With no plugin using the host,
 nothing visible happens in game; its demo window is intentionally disabled.
+
+### Gamepad navigation (L3 + R3)
+
+Up to 1.0.1, holding one stick click and pressing the other toggled ImGui
+gamepad navigation: the D-pad, face buttons, L/R and ZL/ZR then also drove
+every window this host draws (Online Deluxe's included), while the game still
+received every press. Since 1.0.2 the chord does nothing unless
+`sd:/ultimate/imgui_smash/config.ini` contains:
+
+```ini
+gamepad_nav_toggle = on
+```
+
+The file is read once at boot; without it, or with `off`, navigation stays off.
+Touch and a USB keyboard/mouse are unchanged.
 
 ## Plugging in (plugin developer)
 
@@ -76,8 +96,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File ./Build-Standalone.ps1 -Action sky
 ```
 
 `build.rs` refuses an archive whose size or SHA-256 differs from its pin.
-The `clippy` action checks the **host** target; Skyline checks and the four C++
-tests are listed in [DEVELOPMENT.md](docs/DEVELOPMENT.md#checks).
+The `clippy` action checks the **host** target; Skyline checks and the C++
+tests are listed in [DEVELOPMENT.md](docs/DEVELOPMENT.md#checks). Changes by
+version: [CHANGELOG.md](CHANGELOG.md).
 Diagnostic features `frame-guard-stats` and `draw-stats` are off in releases.
 The old Makefile/bind.sh flow was replaced by this pinned build.
 

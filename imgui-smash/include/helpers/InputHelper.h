@@ -27,6 +27,10 @@ public:
 
   static bool isInputToggled() { return toggleInput; }
 
+  // Whether L3 + R3 may toggle gamepad navigation (off unless the host's
+  // config.ini enables it). Disabling also turns navigation off.
+  static void setNavToggleEnabled(bool enabled);
+
   // keyboard key presses
 
   static bool isKeyHold(nn::hid::KeyboardKey key);
@@ -190,6 +194,8 @@ private:
   static ulong selectedPort;
 
   static bool isReadInput;
+
+  static bool navToggleEnabled;
 public:
   static bool toggleInput;
 };

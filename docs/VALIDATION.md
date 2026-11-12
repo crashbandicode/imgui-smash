@@ -2,6 +2,14 @@
 
 ## Release line
 
+**1.0.2** (`main`, not yet tagged or released) carries the Switch build's
+texture-table guard (below) and puts the L3 + R3 gamepad-navigation toggle
+behind `gamepad_nav_toggle` in `sd:/ultimate/imgui_smash/config.ini`, off by
+default. Archive 13,884,166 bytes, SHA-256
+`7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380`. Its host
+checks are the Rust `config` tests and `host-tests/nav_toggle_test.cpp`; it has
+no runtime record yet.
+
 **v1.0.1** merges the previously published `deluxe` renderer into `main` and
 refreshes its documentation. The Rust crate already used version 1.0.1 on that
 branch. This release retains the runtime sources of `deluxe-0.3.9`

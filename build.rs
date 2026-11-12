@@ -10,10 +10,11 @@ const PREBUILT_NOT_USED: &str = "0042ff0592313228b0746ee9214091249f7c70a1797e182
 /// Static archive built from this repository's imgui-smash/ by
 /// `Build-Standalone.ps1 -Action archive` (renderer correction; demo, debug
 /// tools and default fonts off; 64 KiB + 16 KiB draw-slot budgets; the
-/// three-slot swapchain texture table, overlay_texture_policy.hpp). Any other
+/// three-slot swapchain texture table, overlay_texture_policy.hpp; 1.0.2: the
+/// L3 + R3 navigation toggle off unless config.ini enables it). Any other
 /// file is refused.
-const PINNED_SHA256: &str = "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e";
-const PINNED_SIZE: u64 = 13_861_332;
+const PINNED_SHA256: &str = "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
+const PINNED_SIZE: u64 = 13_884_166;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=IMGUI_SMASH_ARTIFACT_DIR");

@@ -1,4 +1,5 @@
 #include "helpers/InputHelper.h"
+#include "helpers/nav_toggle.hpp"
 #include "logger/Logger.hpp"
 
 nn::hid::NpadBaseState InputHelper::prevControllerState{};
@@ -16,6 +17,12 @@ nn::hid::TouchScreenState<HID_TOUCH_MAX_TOUCHES> InputHelper::prevTouchState{};
 ulong InputHelper::selectedPort = -1;
 bool InputHelper::isReadInput = true;
 bool InputHelper::toggleInput = false;
+bool InputHelper::navToggleEnabled = false;
+
+void InputHelper::setNavToggleEnabled(bool enabled) {
+  navToggleEnabled = enabled;
+  toggleInput = nav_toggle::next(toggleInput, enabled, false);
+}
 
 void InputHelper::initKBM() {
   nn::hid::InitializeKeyboard();
@@ -38,9 +45,9 @@ void InputHelper::updatePadState() {
 //  if (isHoldZR() && isHoldR() && isPressPadUp()) {
 //    toggleInput = !toggleInput;
 //  }
-  if ((isHoldLeftStick() && isPressRightStick()) || (isHoldRightStick() && isPressLeftStick())) {
-    toggleInput = !toggleInput;
-  }
+  toggleInput = nav_toggle::next(
+      toggleInput, navToggleEnabled,
+      nav_toggle::chord(isHoldLeftStick(), isPressRightStick(), isHoldRightStick(), isPressLeftStick()));
 }
 
 bool InputHelper::tryGetContState(nn::hid::NpadBaseState *state, ulong port) {

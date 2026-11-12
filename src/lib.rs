@@ -1,10 +1,23 @@
 //! Standalone imgui-smash NRO. The public wrapper at
 //! bb47b205ed0be2fb864269ee2d37fc886b81221e is adapted only enough to drop
 //! imgui-api, prefix this NRO's bootstrap hook, and link a caller-supplied
-//! static archive. Host builds do not create an ImGui context.
+//! static archive. Since 1.0.2 it also reads `config.ini` for the L3 + R3
+//! gamepad-navigation toggle (`config`). Host builds do not create an ImGui
+//! context.
+
+pub mod config;
 
 #[cfg(not(target_os = "switch"))]
 pub const HOST_CREATES_IMGUI_CONTEXT: bool = false;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn version_is_the_patch() {
+        // 1.0.2: the L3 + R3 toggle behind config.ini; a patch on 1.0.1.
+        assert_eq!(env!("CARGO_PKG_VERSION"), "1.0.2");
+    }
+}
 
 #[cfg(target_os = "switch")]
 mod plugin {
@@ -24,6 +37,7 @@ mod plugin {
         fn imgui_smash_add_on_draw_frame(new_frame: *const c_void);
         fn imgui_smash_show_mouse(show_mouse: bool);
         fn imgui_smash_context_setup(callback: *const c_void);
+        fn imgui_smash_set_gamepad_nav_toggle(enabled: bool);
         // ImGui::GetCurrentContext(), which cimgui's igGetCurrentContext wraps.
         // The Skyline target links with --no-gc-sections, so referencing any
         // cimgui symbol would keep all of cimgui.o (every ig* wrapper and the
@@ -71,7 +85,7 @@ mod plugin {
     const _: () = {
         assert!(std::mem::size_of::<DrawStats>() == DRAW_STATS_LAYOUT_BYTES as usize);
         assert!(same_archive(
-            "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e",
+            "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380",
             env!("IMGUI_SMASH_ARCHIVE_SHA256"),
         ));
     };
@@ -88,7 +102,7 @@ mod plugin {
     const FRAME_GUARD_STATUS_FILE: &str = "frame-guard-status.txt";
     #[cfg(feature = "frame-guard-stats")]
     const PINNED_ARCHIVE_SHA256: &str =
-        "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e";
+        "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
 
     #[cfg(feature = "frame-guard-stats")]
     #[repr(C)]
@@ -209,7 +223,12 @@ mod plugin {
 
         skyline::install_hook!(standalone_host_nvn_bootstrap_hook);
 
+        // L3 + R3 toggles gamepad navigation only if config.ini enables it.
+        let nav_toggle = std::fs::read_to_string(crate::config::CONFIG_INI)
+            .is_ok_and(|ini| crate::config::gamepad_nav_toggle(&ini));
+
         unsafe {
+            imgui_smash_set_gamepad_nav_toggle(nav_toggle);
             imgui_smash_context_setup(imgui_post_context as *const c_void);
             imgui_smash_init(std::ptr::null(), std::ptr::null());
         }
@@ -339,7 +358,7 @@ mod plugin {
         use std::io::{Cursor, Write};
         let mut buf = [0u8; 512];
         let mut cursor = Cursor::new(&mut buf[..]);
-        let digest = "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e";
+        let digest = "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
         let _ = if stats.version == 1 && stats.size == DRAW_STATS_LAYOUT_BYTES {
             write!(
                 cursor,

@@ -56,3 +56,13 @@ extern "C" void imgui_smash_add_on_new_frame(NewFrameFunc newFrameCallback);
  * @param loggerCallback the external logger function
  */
 extern "C" void imgui_smash_set_logger(LoggerFunc loggerCallback);
+
+/**
+ * Allows or forbids the L3 + R3 chord that toggles ImGui gamepad navigation. It is forbidden until this is called
+ * with `true` (1.0.2; earlier versions always allowed it). Forbidding it also turns navigation off.
+ *
+ * Call it before `imgui_smash_init`, on the thread that initializes the host.
+ *
+ * @param enabled whether L3 + R3 may toggle gamepad navigation
+ */
+extern "C" void imgui_smash_set_gamepad_nav_toggle(bool enabled);

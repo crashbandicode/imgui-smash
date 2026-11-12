@@ -1,4 +1,5 @@
 #include "imgui_smash.h"
+#include "helpers/InputHelper.h"
 #include "imgui_backend/imgui_nvn.h"
 #include "logger/Logger.hpp"
 #include "cimgui.h"
@@ -39,4 +40,8 @@ extern "C" void imgui_smash_context_setup(InitFunc contextCallback) {
 
 extern "C" void imgui_smash_set_logger(LoggerFunc loggerCallback) {
   Logger::instance().forward(loggerCallback);
+}
+
+extern "C" void imgui_smash_set_gamepad_nav_toggle(bool enabled) {
+  InputHelper::setNavToggleEnabled(enabled);
 }

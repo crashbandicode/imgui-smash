@@ -1,6 +1,6 @@
 [package]
 name = "imgui-smash"
-version = "1.0.1"
+version = "1.0.2"
 authors = []
 edition = "2021"
 publish = false
