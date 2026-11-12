@@ -4,6 +4,7 @@
 #include "helpers/InputHelper.h"
 #include "helpers/memoryHelper.h"
 #include "imgui_backend/imgui_impl_nvn.hpp"
+#include "overlay_texture_policy.hpp"
 #include "imgui_backend_config.h"
 #include "logger/Logger.hpp"
 #include "nvn_CppFuncPtrImpl.h"
@@ -38,6 +39,14 @@ bool hasInitImGui = false;
 int commandBufferCount = 0;
 int currentTextureIndex = -1;
 int numberOfTextures = -1;
+overlay_texture::OverlayTextureBinding overlay_texture::g_overlay_texture_binding{false, 0};
+
+static_assert(static_cast<int>(nvn::WindowAcquireTextureResult::SUCCESS) ==
+                  overlay_texture::kWindowAcquireSuccess,
+              "overlay acquire policy must use the native success value");
+static_assert(static_cast<int>(nvn::WindowAcquireTextureResult::NATIVE_ERROR) ==
+                  overlay_texture::kWindowAcquireNativeError,
+              "overlay acquire policy must keep native failure distinct from success");
 
 namespace nvnImGui {
   ImVector<ProcDrawFunc> drawQueue;
@@ -111,7 +120,9 @@ void presentTexture(nvn::Queue *queue, nvn::Window *window, int texIndex) {
 }
 
 void submitCommands(nvn::Queue *queue, int num_commands, nvn::CommandHandle *handles) {
-  const bool overlay_ready = currentTextureIndex != -1 && hasInitImGui;
+  const bool overlay_ready =
+      hasInitImGui && overlay_texture::overlay_texture_index_accepted(
+                          currentTextureIndex, overlay_texture::g_overlay_texture_binding);
   FrameEntryOwner::Claim claim = claim_frame_entry(overlay_ready);
   if (!claim.holds()) {
     tempQueueSubmitFunc(queue, num_commands, handles);
@@ -150,10 +161,16 @@ void submitCommands(nvn::Queue *queue, int num_commands, nvn::CommandHandle *han
   ImguiDrawSlots::fenceAfterSubmit(slot, queue);
 }
 
-void acquireTexture(nvn::Window * window, nvn::Sync * texture_avaliable_sync, int * texture_index){
-    nvn::WindowAcquireTextureResult res = tempWindowAcquireTextureFunc(window, texture_avaliable_sync, texture_index);
-    currentTextureIndex = *texture_index;
-    return (void)res;
+nvn::WindowAcquireTextureResult::Enum acquireTexture(nvn::Window * window, nvn::Sync * texture_avaliable_sync, int * texture_index){
+    const nvn::WindowAcquireTextureResult::Enum result =
+        tempWindowAcquireTextureFunc(window, texture_avaliable_sync, texture_index);
+    const overlay_texture::OverlayIndexUpdate update = overlay_texture::overlay_index_after_native_acquire(
+        static_cast<int>(result), texture_index != nullptr, [&]() { return *texture_index; },
+        overlay_texture::g_overlay_texture_binding);
+    if (update.replace_current) {
+        currentTextureIndex = update.slot;
+    }
+    return result;
 }
 
 extern "C" void imgui_smash_lookup_original_functions() {
@@ -191,12 +208,15 @@ NVNboolean cmdBufInit(nvn::CommandBuffer *buffer, nvn::Device *device) {
   return result;
 }
 
-void builderSetTextures(nvn::WindowBuilder* builder, int num_textures, nvn::Texture* textures) {
-    if(textures != nullptr && num_textures > 0) {
-        memcpy((void *)nvnTextures, (void *)textures, num_textures << 3);
-    }
-    numberOfTextures = num_textures;
-    tempWindowBuilderSetTexturesFunc(builder, num_textures, (nvn::Texture* const*)textures);
+void builderSetTextures(nvn::WindowBuilder* builder, int num_textures, nvn::Texture* const* textures) {
+    const overlay_texture::OverlayTexturePlan plan =
+        overlay_texture::plan_overlay_textures(num_textures, textures != nullptr);
+    overlay_texture::publish_overlay_texture_table(plan, nvnTextures, textures);
+    const overlay_texture::TableInstall installed = overlay_texture::install_overlay_texture_table(plan);
+    overlay_texture::g_overlay_texture_binding = installed.binding;
+    currentTextureIndex = installed.current_index;
+    numberOfTextures = installed.binding.supported ? installed.binding.count : -1;
+    tempWindowBuilderSetTexturesFunc(builder, plan.native_count, textures);
 }
 
 nvn::GenericFuncPtrFunc getProc(nvn::Device *device, const char *procName) {

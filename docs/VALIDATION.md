@@ -19,13 +19,31 @@ Source lineage:
 | Demo/debug/default-font trims | `b923d90`, `ef98524`, `5ec9928` |
 | Draw-slot budgets | `c185303` — 64 KiB command + 16 KiB control per slot |
 | Archive pin | `77cdab7` — `09b296a0…` |
+| Swapchain texture-table guard | the Switch's build of 2026-10-22 — `1237aa46…` |
 
-The static archive is 13,851,844 bytes, SHA-256
+The v1.0.1 static archive is 13,851,844 bytes, SHA-256
 `09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731`.
 The historical default-feature standalone from `deluxe-0.3.9` is 888,832 bytes,
 SHA-256 `946de84f98546cb791640e40fbf5848ea3965c511631ef18b32e5c805b67d50e`.
 The **v1.0.1 manifest** records the newly packaged NRO, source commit, archive,
 submodule and build checks; use it for the release's exact identity.
+
+## The Switch's build (2026-10-22)
+
+The standalone on the Switch SD since 2026-10-22 is not the published v1.0.1
+NRO. It is v1.0.1 with one renderer change, written on 2026-10-22 as a private
+memory-safety patch and built locally: `overlay_texture_policy.hpp` caps the
+backend's private swapchain texture table at three entries (the old `memcpy`
+copied any count into it), keeps the native count and result, and draws the
+overlay only after a successful acquire with an index inside that table.
+
+- Archive: 13,861,332 bytes, SHA-256
+  `1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e`.
+- NRO: 888,832 bytes, SHA-256
+  `d8e987fea04f70f680838a293f2f3834517490e608f8ecc60fbed55fbcc3d5b6`.
+- The commit that adds the change to `main` rebuilds both byte-identically
+  (the pinned devkitA64 image run by rootless Podman, then `cargo skyline build
+  --release`). `host-tests/overlay_texture_policy_test.cpp` checks the policy.
 
 ## Recorded runtime checks
 

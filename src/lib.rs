@@ -71,7 +71,7 @@ mod plugin {
     const _: () = {
         assert!(std::mem::size_of::<DrawStats>() == DRAW_STATS_LAYOUT_BYTES as usize);
         assert!(same_archive(
-            "09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731",
+            "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e",
             env!("IMGUI_SMASH_ARCHIVE_SHA256"),
         ));
     };
@@ -88,7 +88,7 @@ mod plugin {
     const FRAME_GUARD_STATUS_FILE: &str = "frame-guard-status.txt";
     #[cfg(feature = "frame-guard-stats")]
     const PINNED_ARCHIVE_SHA256: &str =
-        "09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731";
+        "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e";
 
     #[cfg(feature = "frame-guard-stats")]
     #[repr(C)]
@@ -339,7 +339,7 @@ mod plugin {
         use std::io::{Cursor, Write};
         let mut buf = [0u8; 512];
         let mut cursor = Cursor::new(&mut buf[..]);
-        let digest = "09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731";
+        let digest = "1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e";
         let _ = if stats.version == 1 && stats.size == DRAW_STATS_LAYOUT_BYTES {
             write!(
                 cursor,

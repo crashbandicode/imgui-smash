@@ -1,4 +1,5 @@
 #include "imgui_impl_nvn.hpp"
+#include "overlay_texture_policy.hpp"
 #include "DrawSlots.h"
 #include "helpers.h"
 #include "imgui_hid_mappings.h"
@@ -763,7 +764,8 @@ namespace ImguiNvnBackend {
         ImVec2 clip_max(clipRect.z, clipRect.w);
         ImVec2 clip_size(clip_max.x - clip_min.x, clip_max.y - clip_min.y);
 
-        if (currentTextureIndex != -1) {
+        if (overlay_texture::overlay_texture_index_accepted(
+                currentTextureIndex, overlay_texture::g_overlay_texture_binding)) {
           cmd->SetRenderTargets(1, (nvn::Texture *const *)(&nvnTextures[currentTextureIndex]), 0, 0, 0);
         }
         cmd->SetViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));

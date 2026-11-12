@@ -67,8 +67,8 @@ two CPUs, 2 GiB, no container network, and deterministic `ar`/`ranlib` flags.
 It writes `lib/cmake-build/libimgui_smash.a`; Rust writes
 `target/aarch64-skyline-switch/release/libimgui_smash.nro` and the unstripped `.so`.
 
-The pinned archive is **13,851,844 bytes**, SHA-256
-`09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731`.
+The pinned archive is **13,861,332 bytes**, SHA-256
+`1237aa46888d53eeb1badbca59bb9ac4213d228f84665c0e5ddccd47a775eb1e`.
 `build.rs` checks both before linking and never downloads it. Host-only builds
 do not require the archive. The script's Cargo operations are offline; populate
 the pinned dependencies and Docker image before using it offline.
@@ -87,14 +87,14 @@ cargo skyline build --release --no-default-features
 ```
 
 The Rust host configuration excludes the renderer; its successful build is not
-a renderer test. Compile and run the four actual C++ helper tests from
+a renderer test. Compile and run the actual C++ helper tests from
 `imgui-smash/`, writing executables outside the repository. For example, in
 PowerShell on Linux:
 
 ```powershell
 $out = Join-Path ([IO.Path]::GetTempPath()) "imgui-host-tests"
 New-Item -ItemType Directory -Force $out | Out-Null
-foreach ($name in @("command_memory_reserve", "draw_slot_rules", "frame_guard", "frame_guard_concurrent")) {
+foreach ($name in @("command_memory_reserve", "draw_slot_rules", "frame_guard", "frame_guard_concurrent", "overlay_texture_policy")) {
     $sources = @("host-tests/${name}_test.cpp")
     if ($name.StartsWith("frame_guard")) { $sources += "src/imgui_backend/frame_guard.cpp" }
     & g++ -std=c++23 -Wall -Wextra -Werror -pthread -I src -I src/imgui_backend -I include @sources -o "$out/$name"
