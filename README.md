@@ -19,12 +19,13 @@ Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 — standalone NRO, static archive and SHA-256 manifest. 1.1.0 is built from
 the same source Online Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's
 texture-table guard and navigation toggle, so Deluxe drawing through it gets
-the fonts Deluxe has built in, which draw names beyond ASCII instead of `?`
-in Deluxe's own Eden runs. The standalone stays optional; Deluxe doesn't need
-it.
+the fonts Deluxe has built in: names beyond ASCII show as text, not `?`. The
+standalone stays optional; Deluxe doesn't need it.
 
-For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card and has
-not run on a console or in Eden yet. From 2026-10-22 the
+For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card. Its
+runtime record is one Eden run (2026-11-13), not a console run: Online Deluxe
+0.10.4 drew its window through it, with the opponent label `Æsir テスト` in
+each character's own glyph. From 2026-10-22 the
 standalone on the operator's Switch was v1.0.1 plus the texture-table guard
 below ([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
 on the card when Online Deluxe 0.10.4 ran there on 2026-11-10, with

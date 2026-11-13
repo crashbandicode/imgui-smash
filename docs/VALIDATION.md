@@ -38,7 +38,26 @@ is `2b415e64` in both.
   those two import none.
 - **Rebuild:** a fresh clone of `8500f8a` with its own target directory built
   the same NRO bytes.
-- **Runtime:** none yet. 1.1.0 has not run in Eden or on a console.
+- **Eden, run `ims-x1` (2026-11-13, the Surface).** A LAN Online Quickplay
+  pair, TLS off, 1x, volume 0, both profiles named `Æsir テスト`. Instance a ran
+  Online Deluxe 0.10.4's release NRO (`70a2931e…`) with this NRO; instance b
+  ran a Deluxe build that links this archive (`0.10.5-9c994bf68aae-1794571432`)
+  without a standalone. All 11 rows passed (one on a retry in the same boot,
+  after a fix to its own frame check); the rows are in Deluxe's
+  `eden/imgui-standalone/`.
+  - a used this host: Deluxe's `install.log` says
+    `overlay_host_external_ready`, its `events.log` has code 16 `0x5 0x4b3f`
+    (the external host, 19263), and `renderer-status.txt` says
+    `imgui_stats=not_embedded`.
+  - a's opponent label read `Æsir テスト`. A trace of `ImFontBaked::FindGlyph`
+    saw 416 draws of each of Æ, テ, ス and ト, every one the character's own
+    glyph, not the fallback.
+  - After L3 + R3 and D-pad Down and Up, this NRO's
+    `InputHelper::updatePadState` ran and `ImguiNvnBackend::updateGamepad`
+    never did (no `config.ini`): navigation stayed off.
+  - `sync_end desync_seen=0` on both detectors; no unmapped access and no
+    `panic`, `abort`, `crash` or `Unmapped` line in either console log.
+- **Not run on a console.**
 
 **1.0.2** (never tagged or released; its changes are in 1.1.0) carries the Switch build's
 texture-table guard (below) and puts the L3 + R3 gamepad-navigation toggle

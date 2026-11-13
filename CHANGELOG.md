@@ -10,9 +10,8 @@ texture-table guard and navigation toggle. Changes since v1.0.1:
   `unicode-shared-font` and `sparse-codepoint-index` branches): the console's
   shared fonts after JetBrains Mono's ASCII subset, a static Latin set plus a
   dynamic set of the text on screen, and an opt-in paged codepoint index
-  (off in the standalone). With it, Deluxe's built-in host drew its opponent
-  label's own glyphs instead of `?` in Eden; the standalone has no runtime
-  record yet.
+  (off in the standalone). In Eden, Online Deluxe 0.10.4 drawing through
+  this standalone showed its opponent label's own glyphs instead of `?`.
 - **Swapchain texture-table guard** (`97ca947`, the Switch build below).
 - **L3 + R3 is off by default** (`c27ab7e`, 1.0.2 below).
 - Archive `c1e4471b…` (14,820,452 bytes), built by
