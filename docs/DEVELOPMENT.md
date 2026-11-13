@@ -87,14 +87,25 @@ cargo skyline build --release --no-default-features
 ```
 
 The Rust host configuration excludes the renderer; its successful build is not
-a renderer test. Compile and run the actual C++ helper tests from
-`imgui-smash/`, writing executables outside the repository. For example, in
-PowerShell on Linux:
+a renderer test. The C++ host tests build with the host g++ (C++23, warnings
+are errors for this repository's code) and write executables outside the
+repository. `run.py` builds and runs seven of them: `command_memory_reserve`,
+`draw_slot_rules`, `frame_guard`, `frame_guard_concurrent`, `texture_rules`,
+`font_setup` and `paged_index` (the last two also build Dear ImGui, patched
+and unpatched):
+
+```powershell
+python3 -I imgui-smash/host-tests/run.py
+```
+
+`nav_toggle` and `overlay_texture_policy` came to `main` from the 1.0.2 line
+and aren't in `run.py` yet. Build and run them from `imgui-smash/`, for example
+in PowerShell on Linux:
 
 ```powershell
 $out = Join-Path ([IO.Path]::GetTempPath()) "imgui-host-tests"
 New-Item -ItemType Directory -Force $out | Out-Null
-foreach ($name in @("command_memory_reserve", "draw_slot_rules", "frame_guard", "frame_guard_concurrent", "nav_toggle", "overlay_texture_policy")) {
+foreach ($name in @("nav_toggle", "overlay_texture_policy")) {
     $sources = @("host-tests/${name}_test.cpp")
     if ($name.StartsWith("frame_guard")) { $sources += "src/imgui_backend/frame_guard.cpp" }
     & g++ -std=c++23 -Wall -Wextra -Werror -pthread -I src -I src/imgui_backend -I include @sources -o "$out/$name"
@@ -112,7 +123,9 @@ from the warnings-denied focused tests and Rust Clippy gates.
 - `frame-guard-stats` and `draw-stats` add diagnostic writers; neither is enabled
   in the release NRO. Build diagnostic artifacts separately.
 - Demo/debug tooling and bundled Proggy fonts are compiled out. The backend
-  supplies JetBrains Mono NL; calling `AddFontDefault` is not supported by this
+  supplies JetBrains Mono NL's ASCII subset and, on `main` since 2026-11-13,
+  merges the console's shared fonts after it (`font_setup.cpp`,
+  `shared_fonts.cpp`); calling `AddFontDefault` is not supported by this
   configuration. An ImGui assertion can abort the game.
 - The backend's InputHelper reads FullKey, Handheld and JoyDual pads, not
   GameCube controllers. Consumers such as Deluxe can poll their own input.

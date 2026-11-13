@@ -1,10 +1,13 @@
 # imgui-smash: A modified fork of imgui-xeno to get Dear ImGui backend working for Smash
 
+> Upstream's original README, kept for its credits. This fork's pinned build, checks and changes are in the
+> [repository README](../README.md) and [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md).
+
 A [Dear ImGui](https://github.com/ocornut/imgui) backend that leverages NVN to support and target Super Smash Bros. Ultimate specifically (will probably also work with other games that imgui-xeno doesn't work with.)
 
 ## Main Credits
 
-This fork is created from the work of [imgui-xeno](https://github.com/roccodev/imgui-xeno), which was worked on by [roccodev](https://github.com/roccodev), [BlockBuilder57](https://github.com/BlockBuilder57), and (AlexCSDev)[https://github.com/AlexCSDev].
+This fork is created from the work of [imgui-xeno](https://github.com/roccodev/imgui-xeno), which was worked on by [roccodev](https://github.com/roccodev), [BlockBuilder57](https://github.com/BlockBuilder57), and [AlexCSDev](https://github.com/AlexCSDev).
 
 This implementation is a fork of [mp1r-practice-mod](https://github.com/MetroidPrimeModding/mp1r-practice-mod).   
 In particular, it extracts [CraftyBoss](https://github.com/CraftyBoss)'s original NVN backend for use in other games.

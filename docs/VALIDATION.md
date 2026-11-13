@@ -7,8 +7,26 @@ texture-table guard (below) and puts the L3 + R3 gamepad-navigation toggle
 behind `gamepad_nav_toggle` in `sd:/ultimate/imgui_smash/config.ini`, off by
 default. Archive 13,884,166 bytes, SHA-256
 `7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380`. Its host
-checks are the Rust `config` tests and `host-tests/nav_toggle_test.cpp`; it has
-no runtime record yet.
+checks are the Rust `config` tests and `host-tests/nav_toggle_test.cpp`. A
+1.0.2 standalone, 892,928 bytes, SHA-256
+`f72a6b8d5e94d72ec510e1c82d4b218114e24ea98d9b0e1bc05b5615a0deffe7`, replaced
+the Switch's build (below) on the operator's card on 2026-11-12 (card-install
+receipt `card-install-rc9/4-imgui`). It reads `imgui_smash/config.ini` and
+imports none of the shared-font functions, so its font is ASCII only. No
+runtime record with it exists yet.
+
+**On `main` after 1.0.2** (merged 2026-11-13, not released): the font work
+from the former `unicode-shared-font` and `sparse-codepoint-index` branches
+(`966835c`, `bec80ec`, `9405a49`). Online Deluxe 0.10.4 links an archive
+built from `9405a49` (14,788,410 bytes, SHA-256 `26ea2c3b…`); its records,
+Eden runs of the fonts included, are in Deluxe's
+[ImGui dependency record](https://git.syntaxbyexample.com/intpa/ssbu-online-deluxe-rewrite/src/branch/main/docs/IMGUI_DEPENDENCY.md).
+The standalone crate on `main` still pins 1.0.2's archive `7be7d40f…`, built
+before the merge, so a standalone built from `main` doesn't have the font work
+yet. On 2026-11-13 `python3 -I imgui-smash/host-tests/run.py` passed all seven
+tests it runs on `main` (`038f6a5`), and `nav_toggle_test` and
+`overlay_texture_policy_test` passed with the commands in
+[DEVELOPMENT.md](DEVELOPMENT.md#checks).
 
 **v1.0.1** merges the previously published `deluxe` renderer into `main` and
 refreshes its documentation. The Rust crate already used version 1.0.1 on that
@@ -38,8 +56,8 @@ submodule and build checks; use it for the release's exact identity.
 
 ## The Switch's build (2026-10-22)
 
-The standalone on the Switch SD since 2026-10-22 is not the published v1.0.1
-NRO. It is v1.0.1 with one renderer change, written on 2026-10-22 as a private
+The standalone on the Switch SD from 2026-10-22 to 2026-11-12 was not the
+published v1.0.1 NRO. It was v1.0.1 with one renderer change, written on 2026-10-22 as a private
 memory-safety patch and built locally: `overlay_texture_policy.hpp` caps the
 backend's private swapchain texture table at three entries (the old `memcpy`
 copied any count into it), keeps the native count and result, and draws the
@@ -56,7 +74,9 @@ overlay only after a successful acquire with an index inside that table.
 ## Recorded runtime checks
 
 The October 14 Eden campaign exercised the reduced-budget renderer in three
-configurations: standalone with Deluxe and Elite, Deluxe's embedded host, and
+configurations: standalone with Deluxe and the original Elite Legal Stages
+NRO (it drew its own ImGui menu; its replacement, Legal Stages + Loser
+Counterpick, draws none), Deluxe's embedded host, and
 reversed standalone load order. The external diagnostic run recorded 29,658
 submissions, no overflow/failed/pending skips and maxima 1,448 command bytes /
 120 control bytes. The embedded run recorded 13,201 submissions, no overflow,
@@ -76,11 +96,13 @@ Historical records retain their original candidate identities and dates.
 
 ## Compatibility and scope
 
-The integration target is Smash Ultimate 13.0.5. Latest runtime identities checked
-on 2026-10-25 are Switch firmware 23.0.1, Atmosphère 1.12.1 and Skyline beta
-`2eb226fa9e4ab023dc00cb0db10ad4ec50ac4fa3`; authoritative links are in the
-[README](../README.md). These version references are not additional runtime tests.
-Skyline's `beta` runtime tag is distinct from the Rust `skyline` crate version.
+The integration target is Smash Ultimate 13.0.5. The October 25 report named
+Switch firmware 23.0.1, Atmosphère 1.12.1 and Skyline beta
+`2eb226fa9e4ab023dc00cb0db10ad4ec50ac4fa3`; the Switch still ran firmware
+23.0.1 and Atmosphère 1.12.1 when Online Deluxe 0.10.4 ran there on
+2026-11-10, with the Switch's build above on the card. These version
+references are not additional tests of this host. Skyline's `beta` runtime
+tag is distinct from the Rust `skyline` crate version.
 
 Frame ownership and storage-lifetime defects were identified in source and
 corrected. Earlier visibility loss was intermittent: passing the recorded

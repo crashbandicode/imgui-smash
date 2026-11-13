@@ -11,19 +11,23 @@ at [`bb47b205`](https://github.com/Coolsonickirby/imgui-smash/commit/bb47b205ed0
 It is the host plugin whose exported
 functions let other Skyline plugins draw their own ImGui windows, and it is
 the renderer that [Online Deluxe](https://git.syntaxbyexample.com/intpa/ssbu-online-deluxe-rewrite)
-links statically. The former `deluxe` branch is now included in `main`.
+links statically. The former `deluxe`, `unicode-shared-font` and
+`sparse-codepoint-index` branches are now included in `main`.
 Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 
 **[Download v1.0.1](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.0.1)**
-— standalone NRO, static archive and SHA-256 manifest.
+— standalone NRO, static archive and SHA-256 manifest. It is the newest
+release; 1.0.2 and the text beyond ASCII below are on `main` only.
 
-For **Smash Ultimate 13.0.5**. Current runtime references, checked 2026-10-25:
-[Switch firmware 23.0.1](https://en-americas-support.nintendo.com/app/answers/detail/a_id/22525/~/nintendo-switch-system-updates-and-change-history#current),
-[Atmosphère 1.12.1](https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.1),
-and [Skyline beta `2eb226f`](https://github.com/skyline-dev/skyline/releases/tag/beta).
-The renderer has recorded Eden validation; the operator also reports the Deluxe/FX
-stack working on an Erista Switch. Those reports are separate from testing this
-new release package. See [the evidence](docs/VALIDATION.md).
+For **Smash Ultimate 13.0.5**. From 2026-10-22 the standalone on the
+operator's Switch was v1.0.1 plus the texture-table guard below
+([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
+on the card when Online Deluxe 0.10.4 ran there on 2026-11-10, with
+[Switch firmware 23.0.1](https://en-americas-support.nintendo.com/app/answers/detail/a_id/22525/~/nintendo-switch-system-updates-and-change-history)
+and [Atmosphère 1.12.1](https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.1).
+Since 2026-11-12 the card has a 1.0.2 build instead; no console run with it
+is recorded. The renderer's other runtime records are Eden runs. See
+[the evidence](docs/VALIDATION.md).
 
 ## What this fork changes
 
@@ -44,10 +48,16 @@ new release package. See [the evidence](docs/VALIDATION.md).
 - **Bounded swapchain texture table.** At most three texture pointers are
   copied, and the overlay draws only after a successful acquire with an index
   inside that table (the Switch build of 2026-10-22, on `main` since 1.0.2).
-- **Gamepad navigation off by default (1.0.2).** L3 + R3 no longer toggles
-  ImGui gamepad navigation unless `config.ini` enables it (below).
+- **Gamepad navigation off by default (1.0.2, not released yet).** L3 + R3
+  no longer toggles ImGui gamepad navigation unless `config.ini` enables it
+  (below).
 
-- **Text beyond ASCII (branch `unicode-shared-font`).**
+The font work below is on `main` (from the former `unicode-shared-font` and
+`sparse-codepoint-index` branches) and in the archive Online Deluxe 0.10.4
+links. It is not in a release, and the standalone crate on `main` still pins
+1.0.2's archive (`7be7d40f…`), built before it was merged.
+
+- **Text beyond ASCII.**
   - **Fonts.** JetBrains Mono's ASCII subset stays the first font at 18 px.
     The console's system shared fonts (`nn::pl`: Standard with Latin and
     Japanese, Chinese, Korean, Nintendo Extended) are merged after it, read in
@@ -72,7 +82,7 @@ new release package. See [the evidence](docs/VALIDATION.md).
   - **Stats.** `imgui_smash_font_stats` reports the static and dynamic
     counts, rebuilds and texture and index bytes;
     `imgui_smash_font_dynamic_set` lists the dynamic set.
-- **Paged codepoint index (branch `sparse-codepoint-index`).**
+- **Paged codepoint index.**
   - **The cost it removes.** Dear ImGui indexes a font's glyphs in two
     arrays with an entry per codepoint up to the highest one loaded:
     6 bytes per codepoint, about 330 KB once a Hangul glyph is loaded.
@@ -97,9 +107,12 @@ new release package. See [the evidence](docs/VALIDATION.md).
 
 ## Installing the host (plugin user)
 
-Only needed when another plugin draws its own windows (for example Elite Legal
-Stages). Deluxe alone does not need it: it carries the renderer inside its own
-NRO and reuses this host only when a compatible one is present.
+Only needed when another plugin draws its own ImGui windows through this
+host. Online Deluxe doesn't need it: it carries the renderer inside its own
+NRO. While this host is loaded, Deluxe doesn't start its own: it draws in this
+host if the exports and the ImGui version match, and its window stays off if
+they don't. Drawing in this host means this host's font; v1.0.1's is ASCII
+only, so names outside ASCII show `?` in Deluxe's window.
 
 - Download **`libimgui_smash.nro`** from [v1.0.1](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.0.1).
 - Place it in `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
@@ -113,7 +126,8 @@ nothing visible happens in game; its demo window is intentionally disabled.
 Up to 1.0.1, holding one stick click and pressing the other toggled ImGui
 gamepad navigation: the D-pad, face buttons, L/R and ZL/ZR then also drove
 every window this host draws (Online Deluxe's included), while the game still
-received every press. Since 1.0.2 the chord does nothing unless
+received every press. In 1.0.2 (on `main`, not released yet) the chord does
+nothing unless
 `sd:/ultimate/imgui_smash/config.ini` contains:
 
 ```ini
@@ -157,7 +171,7 @@ The `clippy` action checks the **host** target; Skyline checks and the C++
 tests are listed in [DEVELOPMENT.md](docs/DEVELOPMENT.md#checks). Changes by
 version: [CHANGELOG.md](CHANGELOG.md).
 Diagnostic features `frame-guard-stats` and `draw-stats` are off in releases.
-The old Makefile/bind.sh flow was replaced by this pinned build.
+Releases use this pinned build, not upstream's `imgui-smash/Makefile`.
 
 ## Credits
 
