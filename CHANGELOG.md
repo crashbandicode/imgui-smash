@@ -25,7 +25,7 @@ The same archive as 1.1.0 (`c1e4471b…`); only the Rust shell changes.
   primitive in the Rust shell or the archive's C++.
 - Every 1.1.0 export is unchanged.
 
-## 1.1.0 (2026-11-13)
+## 1.1.0 (2026-11-13, staged but never published; its changes are in 1.2.0)
 
 The standalone catches up with the ImGui Online Deluxe links: its archive is
 built from the same source Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's

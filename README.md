@@ -15,17 +15,21 @@ links statically. The former `deluxe`, `unicode-shared-font` and
 `sparse-codepoint-index` branches are now included in `main`.
 Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 
-**[Download v1.1.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.1.0)**
-— standalone NRO, static archive and SHA-256 manifest. 1.1.0 is built from
+**[Download v1.2.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.2.0)**
+— standalone NRO, static archive and SHA-256 manifest. 1.2.0 is built from
 the same source Online Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's
 texture-table guard and navigation toggle, so Deluxe drawing through it gets
-the fonts Deluxe has built in: names beyond ASCII show as text, not `?`. The
-standalone stays optional; Deluxe doesn't need it.
+the fonts Deluxe has built in: names beyond ASCII show as text, not `?`. It
+pages the codepoint index when every client can read it, exports its counters
+and takes no lock in the hook path. The standalone stays optional; Deluxe
+doesn't need it. (1.1.0 was staged but never published; its changes are in
+1.2.0.)
 
-For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card. Its
-runtime record is one Eden run (2026-11-13), not a console run: Online Deluxe
-0.10.4 drew its window through it, with the opponent label `Æsir テスト` in
-each character's own glyph. From 2026-10-22 the
+For **Smash Ultimate 13.0.5**. 1.2.0 is not on the operator's card. Its
+runtime record is from Eden (2026-11-13), not a console: Online Deluxe drew
+its window through it as it does through its built-in host (pairs imp-opp9
+and imp-opp10), with the opponent label `Æsir テスト` in each character's own
+glyph. From 2026-10-22 the
 standalone on the operator's Switch was v1.0.1 plus the texture-table guard
 below ([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
 on the card when Online Deluxe 0.10.4 ran there on 2026-11-10, with
@@ -121,7 +125,7 @@ they don't. Drawing in this host means this host's font. From 1.1.0 that is
 the font Deluxe has built in; v1.0.1's and 1.0.2's were ASCII only, so names
 outside ASCII showed `?` in Deluxe's window.
 
-- Download **`libimgui_smash.nro`** from [v1.1.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.1.0).
+- Download **`libimgui_smash.nro`** from [v1.2.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.2.0).
 - Place it in `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
 - Replace an existing copy rather than installing a second host; fully restart Smash.
 

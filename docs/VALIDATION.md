@@ -39,9 +39,15 @@ hook path (`7d0eff5`).
     b, 5 entries each; `ImguiNvnBackend::updateGamepad` ran on neither.
   - `desync_seen=0` at the same `sync_end` frames on both; no unmapped access
     or console error.
+- **The release commit.** After `7d0eff5` only `Build-Standalone.ps1` (a
+  40 GiB free-disk floor) and the docs changed. At `2e7e95a` the checks above
+  passed again (`cargo test` 12 + 2, clippy with and without
+  `frame-guard-stats`, the no-default-features build, Skyline clippy with and
+  without it, both Skyline builds), and a clean clone with its own target
+  directory and the pinned archive built the same NRO bytes (`9c411083…`).
 - **Not run on a console.**
 
-**1.1.0** (2026-11-13) makes the standalone current with the ImGui Online
+**1.1.0** (2026-11-13, staged but never published) makes the standalone current with the ImGui Online
 Deluxe links. Its archive is built from the same source Deluxe 0.10.4 links
 (`9405a49`), plus 1.0.2's texture-table guard (`97ca947`) and navigation
 toggle (`c27ab7e`): applying `git diff 82f4bf7 c27ab7e -- imgui-smash/` (those
