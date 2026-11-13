@@ -36,6 +36,9 @@ is `2b415e64` in both.
   1.0.2 build's (`f72a6b8d…`). It imports `nn::pl::RequestSharedFontLoad`,
   `GetSharedFontLoadState`, `GetSharedFontAddress` and `GetSharedFontSize`;
   those two import none.
+- **Rebuild:** a fresh clone of `8500f8a` with its own target directory built
+  the same NRO bytes.
+- **Runtime:** none yet. 1.1.0 has not run in Eden or on a console.
 
 **1.0.2** (never tagged or released; its changes are in 1.1.0) carries the Switch build's
 texture-table guard (below) and puts the L3 + R3 gamepad-navigation toggle

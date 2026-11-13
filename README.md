@@ -18,12 +18,13 @@ Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 **[Download v1.1.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.1.0)**
 — standalone NRO, static archive and SHA-256 manifest. 1.1.0 is built from
 the same source Online Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's
-texture-table guard and navigation toggle, so its font is the one Deluxe
-draws with: names beyond ASCII show as text, not `?`. The standalone stays
-optional; Deluxe doesn't need it.
+texture-table guard and navigation toggle, so Deluxe drawing through it gets
+the fonts Deluxe has built in, which draw names beyond ASCII instead of `?`
+in Deluxe's own Eden runs. The standalone stays optional; Deluxe doesn't need
+it.
 
-For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card, and its
-runtime record is an Eden run, not a console run. From 2026-10-22 the
+For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card and has
+not run on a console or in Eden yet. From 2026-10-22 the
 standalone on the operator's Switch was v1.0.1 plus the texture-table guard
 below ([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
 on the card when Online Deluxe 0.10.4 ran there on 2026-11-10, with
