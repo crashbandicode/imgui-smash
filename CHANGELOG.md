@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 (2026-11-13, not released)
+
+The same archive as 1.1.0 (`c1e4471b…`); only the Rust shell changes.
+
+- **Paged codepoint index when every client reads it.** When the context is
+  created, the host lists the loaded plugins whose read-only segment names one
+  of its context exports (`src/clients.rs`). If each of them has called the new
+  `imgui_smash_declare_paged_index_reader_v1(fn in its own text)`, the fonts
+  index glyphs in 256-codepoint pages, as Online Deluxe's built-in host does;
+  otherwise the index stays dense, as in 1.1.0, so a client built with an
+  unpatched Dear ImGui still reads it. `imgui_smash_host_clients_v1` reports the
+  choice.
+- **The archive's counters are exported** (`imgui_smash_font_stats_wrapper`,
+  `imgui_smash_font_dynamic_set_wrapper`, `imgui_smash_draw_stats_wrapper`,
+  `imgui_smash_frame_guard_stats_wrapper`), so a client that draws through this
+  host can report the overlay's fonts and renderer as the built-in host does.
+- Every 1.1.0 export is unchanged.
+
 ## 1.1.0 (2026-11-13)
 
 The standalone catches up with the ImGui Online Deluxe links: its archive is

@@ -99,7 +99,10 @@ The font work below came from the former `unicode-shared-font` and
   - **Opt-in.** `imgui_smash_font_use_paged_index(1)`, called before
     `imgui_smash_init`, turns it on for the overlay's fonts. It is off by
     default: a plugin built with an unpatched Dear ImGui reads the index
-    directly, so a standalone host whose context it may share stays dense.
+    directly. Since 1.2.0 the standalone turns it on when every plugin that
+    names one of its context exports has declared a patched reader
+    (`imgui_smash_declare_paged_index_reader_v1`, [DEVELOPMENT](docs/DEVELOPMENT.md));
+    otherwise it stays dense.
   - **Tests.** `paged_index_test` builds the patched and the unpatched Dear
     ImGui. It requires identical glyphs, advances, sizes, wraps and vertices
     from the dense and the paged index, and times `CalcTextSize`.

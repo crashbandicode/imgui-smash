@@ -24,6 +24,23 @@ The standalone's [Rust glue](../src/lib.rs) preserves these upstream exports:
 - `imgui_get_context_export`
 - `imgui_show_demo_window_wrapper` — retained as a no-op.
 
+Since 1.2.0 it also exports:
+
+- `imgui_smash_declare_paged_index_reader_v1(probe)`: call it from `main`, with
+  any function of your plugin, only if the Dear ImGui code you draw with is built
+  with `imgui-smash/patches/imgui/0001-paged-codepoint-index.patch` (the archive
+  is). When the context is created, the host lists every loaded plugin that names
+  one of the context exports above (setup, get-context, draw, new-frame,
+  pre-init); the fonts index glyphs in 256-codepoint pages only if each of them
+  declared, and stay dense otherwise. Returns 1 when recorded in time, 2 after
+  the choice (no effect), 0 when the probe is not in a plugin's text.
+- `imgui_smash_host_clients_v1(out)`: the choice (`src/clients.rs`
+  `HostClients`, 32 bytes).
+- `imgui_smash_font_stats_wrapper`, `imgui_smash_font_dynamic_set_wrapper`,
+  `imgui_smash_draw_stats_wrapper`, `imgui_smash_frame_guard_stats_wrapper`:
+  the archive's counters (`include/imgui_smash_font_stats.h`,
+  `include/imgui_smash_draw_stats.h`, `frame_guard.hpp`).
+
 Register context setup during plugin initialization; set the consumer's current
 context to the pointer supplied by the host. Draw from the host's frame callback,
 balance Begin/End and Push/Pop, and do not start another renderer for a borrowed

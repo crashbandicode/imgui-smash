@@ -3,8 +3,12 @@
 //! imgui-api, prefix this NRO's bootstrap hook, and link a caller-supplied
 //! static archive. Since 1.0.2 it also reads `config.ini` for the L3 + R3
 //! gamepad-navigation toggle (`config`). Since 1.1.0 the archive is the one
-//! Online Deluxe links. Host builds do not create an ImGui context.
+//! Online Deluxe links. Since 1.2.0 the fonts index glyphs in pages when every
+//! client declared a paged reader (`clients`), and the archive's counters are
+//! exported for a client that draws through this host. Host builds do not
+//! create an ImGui context.
 
+pub mod clients;
 pub mod config;
 
 #[cfg(not(target_os = "switch"))]
@@ -16,7 +20,9 @@ mod tests {
     fn version_is_the_release() {
         // 1.1.0: the archive Online Deluxe links (shared fonts, paged index) plus
         // 1.0.2's texture-table guard and L3 + R3 toggle behind config.ini.
-        assert_eq!(env!("CARGO_PKG_VERSION"), "1.1.0");
+        // 1.2.0: the same archive; the paged index when every client reads it,
+        // and the archive's counters exported.
+        assert_eq!(env!("CARGO_PKG_VERSION"), "1.2.0");
     }
 }
 
@@ -39,24 +45,19 @@ mod plugin {
         fn imgui_smash_show_mouse(show_mouse: bool);
         fn imgui_smash_context_setup(callback: *const c_void);
         fn imgui_smash_set_gamepad_nav_toggle(enabled: bool);
+        fn imgui_smash_font_use_paged_index(enabled: i32) -> i32;
+        // The archive's counters (include/imgui_smash_font_stats.h,
+        // imgui_smash_draw_stats.h, src/imgui_backend/frame_guard.hpp).
+        fn imgui_smash_font_stats(out: *mut c_void) -> i32;
+        fn imgui_smash_font_dynamic_set(out: *mut u32, cap: u32) -> i32;
+        fn imgui_smash_draw_stats(out: *mut c_void) -> i32;
+        fn imgui_smash_frame_guard_stats(out: *mut c_void) -> i32;
         // ImGui::GetCurrentContext(), which cimgui's igGetCurrentContext wraps.
         // The Skyline target links with --no-gc-sections, so referencing any
         // cimgui symbol would keep all of cimgui.o (every ig* wrapper and the
         // code they reach) in this NRO although nothing here calls them.
         #[link_name = "_ZN5ImGui17GetCurrentContextEv"]
         fn igGetCurrentContext() -> *mut c_void;
-    }
-
-    #[cfg(feature = "frame-guard-stats")]
-    #[link(name = "imgui_smash", kind = "static")]
-    unsafe extern "C" {
-        fn imgui_smash_frame_guard_stats(out: *mut FrameGuardStats) -> i32;
-    }
-
-    #[cfg(feature = "draw-stats")]
-    #[link(name = "imgui_smash", kind = "static")]
-    unsafe extern "C" {
-        fn imgui_smash_draw_stats(out: *mut DrawStats) -> i32;
     }
 
     #[cfg(feature = "draw-stats")]
@@ -152,7 +153,11 @@ mod plugin {
     /// Digest of the static archive this NRO was linked against.
     static LINKED_ARCHIVE_SHA256: &str = env!("IMGUI_SMASH_ARCHIVE_SHA256");
 
+    /// Runs first in the archive's context setup, before the backend adds the
+    /// fonts (`InitImGui`: CreateContext, the context-setup queue, then
+    /// InitBackend), so the index mode is set before the only bake exists.
     unsafe extern "C" fn imgui_post_context() {
+        choose_index();
         let context = igGetCurrentContext();
         let funcs = POST_INIT_FUNCS.lock().unwrap();
         for callback in funcs.iter() {
@@ -194,6 +199,216 @@ mod plugin {
     #[no_mangle]
     pub unsafe extern "C" fn imgui_get_context_export() -> *mut u64 {
         igGetCurrentContext().cast()
+    }
+
+    /// A client declares that the Dear ImGui code it draws this host's context
+    /// with reads the paged codepoint index (the archive's
+    /// `0001-paged-codepoint-index.patch`). `probe` is any function in the
+    /// client's own text. Returns 1 when recorded before the index mode was
+    /// chosen, 2 when the choice was already made (the declaration then
+    /// changes nothing), 0 when `probe` is not in a loaded plugin's text.
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_declare_paged_index_reader_v1(probe: *const c_void) -> u32 {
+        let Some((base, _)) = (unsafe { plugin_of(probe as usize) }) else {
+            return 0;
+        };
+        {
+            let mut declared = DECLARED.lock().unwrap();
+            let (bases, count) = &mut *declared;
+            if !bases[..*count].contains(&base) && *count < bases.len() {
+                bases[*count] = base;
+                *count += 1;
+            }
+        }
+        if CHOICE.lock().unwrap().is_some() {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// How the index mode was chosen (`clients::HostClients`, version 1).
+    /// Returns 1 after the choice, 0 before it or for a null pointer.
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_host_clients_v1(out: *mut crate::clients::HostClients) -> i32 {
+        if out.is_null() {
+            return 0;
+        }
+        match *CHOICE.lock().unwrap() {
+            Some(record) => {
+                unsafe { out.write(record) };
+                1
+            }
+            None => 0,
+        }
+    }
+
+    /// The archive's font counters (`ImguiSmashFontStats`), for a client that
+    /// draws through this host and reports the overlay's fonts.
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_font_stats_wrapper(out: *mut c_void) -> i32 {
+        unsafe { imgui_smash_font_stats(out) }
+    }
+
+    /// The dynamic codepoints in the atlas (`imgui_smash_font_dynamic_set`).
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_font_dynamic_set_wrapper(out: *mut u32, cap: u32) -> i32 {
+        unsafe { imgui_smash_font_dynamic_set(out, cap) }
+    }
+
+    /// The renderer's draw-slot counters (`ImguiSmashDrawStats`).
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_draw_stats_wrapper(out: *mut c_void) -> i32 {
+        unsafe { imgui_smash_draw_stats(out) }
+    }
+
+    /// The frame guard's counters (`ImguiSmashFrameGuardStats`).
+    #[no_mangle]
+    pub unsafe extern "C" fn imgui_smash_frame_guard_stats_wrapper(out: *mut c_void) -> i32 {
+        unsafe { imgui_smash_frame_guard_stats(out) }
+    }
+
+    /// Module bases of the declared paged readers (fixed storage: no heap).
+    static DECLARED: Mutex<([usize; MAX_DECLARED], usize)> = Mutex::new(([0; MAX_DECLARED], 0));
+    const MAX_DECLARED: usize = 16;
+    /// The index-mode choice, once made.
+    static CHOICE: Mutex<Option<crate::clients::HostClients>> = Mutex::new(None);
+    const MAX_PLUGINS: usize = 64;
+
+    /// The clients (plugins other than this one that name a context export),
+    /// checked against the declarations; the archive's fonts follow.
+    unsafe fn choose_index() {
+        let own = unsafe { plugin_of(choose_index as *const () as usize) }.map(|(base, _)| base);
+        let mut clients = [0usize; MAX_PLUGINS];
+        let mut count = 0;
+        let mut seen = 0;
+        let mut overflow = false;
+        unsafe {
+            for_each_plugin(|base, segments| {
+                seen += 1;
+                if Some(base) == own || !names_export(base, segments) {
+                    return;
+                }
+                if count < clients.len() {
+                    clients[count] = base;
+                    count += 1;
+                } else {
+                    overflow = true;
+                }
+            });
+        }
+        let (declared, declared_count) = *DECLARED.lock().unwrap();
+        let mut record = crate::clients::host_clients(&clients[..count], &declared[..declared_count], seen);
+        if overflow {
+            // More clients than the table holds: one of them is unchecked.
+            record.paged = 0;
+            record.clients = record.clients.saturating_add(1);
+        }
+        unsafe {
+            imgui_smash_font_use_paged_index(record.paged as i32);
+        }
+        *CHOICE.lock().unwrap() = Some(record);
+    }
+
+    unsafe fn names_export(base: usize, segments: crate::clients::NroSegments) -> bool {
+        let Some(start) = base.checked_add(segments.ro_offset as usize) else {
+            return true;
+        };
+        let size = segments.ro_size as usize;
+        if !unsafe { readable(start, size) } {
+            // Unreadable: count it as a client, which keeps the index dense.
+            return true;
+        }
+        crate::clients::names_context_export(unsafe { std::slice::from_raw_parts(start as *const u8, size) })
+    }
+
+    /// Horizon QueryMemory (libnx `svcQueryMemory`, svc 0x6).
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemoryInfo {
+        address: u64,
+        size: u64,
+        kind: u32,
+        attributes: u32,
+        permission: u32,
+        ipc_references: u32,
+        device_references: u32,
+        padding: u32,
+    }
+
+    unsafe fn query(address: usize) -> Option<MemoryInfo> {
+        let mut info = MemoryInfo::default();
+        let result: u64;
+        unsafe {
+            core::arch::asm!(
+                "svc 0x6",
+                inout("x0") &mut info as *mut MemoryInfo as u64 => result,
+                lateout("x1") _,
+                in("x2") address as u64,
+                clobber_abi("C"),
+                options(nostack),
+            );
+        }
+        (result as u32 == 0).then_some(info)
+    }
+
+    unsafe fn readable(address: usize, size: usize) -> bool {
+        let Some(end) = address.checked_add(size) else {
+            return false;
+        };
+        if address < 0x10000 || size == 0 {
+            return false;
+        }
+        unsafe { query(address) }.is_some_and(|info| {
+            info.permission & 1 == 1
+                && info.address <= address as u64
+                && info.address.checked_add(info.size).is_some_and(|mapped| end as u64 <= mapped)
+        })
+    }
+
+    /// The plugin image whose text holds `address`: Skyline maps an NRO's text
+    /// at its header, so the text mapping's base is the module base.
+    unsafe fn plugin_of(address: usize) -> Option<(usize, crate::clients::NroSegments)> {
+        let info = unsafe { query(address) }?;
+        if info.permission != 5 {
+            return None;
+        }
+        let base = info.address as usize;
+        let segments = unsafe { plugin_header(base, info.size as usize) }?;
+        ((address - base) < segments.text_size as usize).then_some((base, segments))
+    }
+
+    unsafe fn plugin_header(base: usize, mapped: usize) -> Option<crate::clients::NroSegments> {
+        if mapped < 0x80 || !unsafe { readable(base, 0x80) } {
+            return None;
+        }
+        let header = unsafe { std::slice::from_raw_parts(base as *const u8, 0x80) };
+        crate::clients::parse_nro_header(header).filter(|segments| segments.text_size as usize <= mapped)
+    }
+
+    /// Every executable mapping that starts with a plugin's NRO header.
+    unsafe fn for_each_plugin(mut visit: impl FnMut(usize, crate::clients::NroSegments)) {
+        let mut address = 0usize;
+        for _ in 0..0x10000 {
+            let Some(info) = (unsafe { query(address) }) else {
+                return;
+            };
+            if info.size == 0 {
+                return;
+            }
+            if info.permission == 5 {
+                if let Some(segments) = unsafe { plugin_header(info.address as usize, info.size as usize) } {
+                    visit(info.address as usize, segments);
+                }
+            }
+            let Some(next) = info.address.checked_add(info.size) else {
+                return;
+            };
+            if next as usize <= address {
+                return;
+            }
+            address = next as usize;
+        }
     }
 
     #[hook(replace = nvnBootstrapLoader)]
@@ -264,7 +479,7 @@ mod plugin {
             return;
         }
         let mut stats = FrameGuardStats::default();
-        let wrote = unsafe { imgui_smash_frame_guard_stats(&mut stats) };
+        let wrote = unsafe { imgui_smash_frame_guard_stats((&mut stats as *mut FrameGuardStats).cast()) };
         if wrote != 1 {
             return;
         }
@@ -346,7 +561,7 @@ mod plugin {
             return;
         }
         let mut stats = DrawStats::default();
-        let wrote = unsafe { imgui_smash_draw_stats(&mut stats) };
+        let wrote = unsafe { imgui_smash_draw_stats((&mut stats as *mut DrawStats).cast()) };
         if wrote != 1 {
             return;
         }
