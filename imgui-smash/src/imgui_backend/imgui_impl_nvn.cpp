@@ -9,12 +9,16 @@
 #include "nn/hid.h"
 
 #include "helpers/InputHelper.h"
+#include "helpers/memoryHelper.h"
 #include "MemoryPoolMaker.h"
+#include "command_memory_reserve.hpp"
+#include "font_setup.hpp"
 #include "imgui_backend_config.h"
+#include "imgui_smash_font_stats.h"
+#include "shared_fonts.hpp"
 
-#if IMGUI_SMASH_LOAD_DEFAULT_FONT
-#include "JetBrainsMonoNL-Regular.h"
-#endif
+#include <atomic>
+#include <cstdint>
 
 #include "imgui_shader.h"
 
@@ -295,13 +299,173 @@ namespace ImguiNvnBackend {
     return false;
   }
 
-  bool setupFont() {
+  namespace {
 
-    Logger::log("Setting up ImGui Font.\n");
+  // Backend storage of one ImGui texture. TexID points at `handle`, which renderDrawData binds per draw command.
+  struct NvnTexture {
+    nvn::Texture texture;
+    nvn::MemoryPool pool;
+    void *storage = nullptr;
+    size_t poolBytes = 0;
+    nvn::TextureHandle handle = 0;
+    int descriptor = -1;
+    bool poolLive = false;
+    bool textureLive = false;
+    bool retiring = false;
+    uint64_t retireAfter = 0;
+  };
+
+  std::atomic<uint32_t> g_atlasWidth{0};
+  std::atomic<uint32_t> g_atlasHeight{0};
+  std::atomic<uint32_t> g_atlasBytesPerPixel{0};
+  std::atomic<uint32_t> g_texturesLive{0};
+  std::atomic<uint64_t> g_pixelBytes{0};
+  std::atomic<uint64_t> g_poolBytes{0};
+  std::atomic<uint64_t> g_creates{0};
+  std::atomic<uint64_t> g_updates{0};
+  std::atomic<uint64_t> g_destroys{0};
+
+  void releaseTexture(NvnBackendData *bd, NvnTexture *owned) {
+    if (owned->textureLive) {
+      owned->texture.Finalize();
+    }
+    if (owned->poolLive) {
+      owned->pool.Finalize();
+    }
+    if (owned->storage != nullptr) {
+      Mem::Deallocate(owned->storage);
+    }
+    bd->textureIds.release(owned->descriptor);
+    IM_DELETE(owned);
+  }
+
+  bool createTexture(NvnBackendData *bd, ImTextureData *tex) {
+    const bool alpha = tex->Format == ImTextureFormat_Alpha8;
+    if ((!alpha && tex->Format != ImTextureFormat_RGBA32) || tex->Width <= 0 || tex->Height <= 0) {
+      return false;
+    }
+    void *memory = ImGui::MemAlloc(sizeof(NvnTexture));
+    if (memory == nullptr) {
+      return false;
+    }
+    auto *owned = new (ImNewWrapper(), memory) NvnTexture();
+    nvn::TextureBuilder builder;
+    builder.SetDefaults()
+        .SetDevice(bd->device)
+        .SetTarget(nvn::TextureTarget::TARGET_2D)
+        .SetFormat(alpha ? nvn::Format::R8 : nvn::Format::RGBA8)
+        .SetSize2D(tex->Width, tex->Height);
+    if (alpha) {
+      // Coverage in R; sampled as white with that alpha, exactly what the RGBA32 atlas held.
+      builder.SetSwizzle(nvn::TextureSwizzle::ONE, nvn::TextureSwizzle::ONE, nvn::TextureSwizzle::ONE,
+                         nvn::TextureSwizzle::R);
+    }
+    int pageQuery = 0;
+    bd->device->GetInteger(nvn::DeviceInfo::MEMORY_POOL_PAGE_SIZE, &pageQuery);
+    const int page = device_alignment(pageQuery, 0x1000);
+    owned->poolBytes = texturePoolBytes(builder.GetStorageSize(), builder.GetStorageAlignment(),
+                                        static_cast<size_t>(page > 0 ? page : 0x1000));
+    owned->storage = owned->poolBytes != 0 ? Mem::AllocateAlign(static_cast<size_t>(page), owned->poolBytes) : nullptr;
+    if (owned->storage == nullptr) {
+      releaseTexture(bd, owned);
+      return false;
+    }
+    nvn::MemoryPoolBuilder poolBuilder;
+    poolBuilder.SetDefaults()
+        .SetDevice(bd->device)
+        .SetFlags(nvn::MemoryPoolFlags::CPU_UNCACHED | nvn::MemoryPoolFlags::GPU_CACHED)
+        .SetStorage(owned->storage, owned->poolBytes);
+    owned->poolLive = owned->pool.Initialize(&poolBuilder);
+    if (!owned->poolLive) {
+      releaseTexture(bd, owned);
+      return false;
+    }
+    builder.SetStorage(&owned->pool, 0);
+    owned->textureLive = owned->texture.Initialize(&builder);
+    owned->descriptor = owned->textureLive ? bd->textureIds.acquire() : -1;
+    if (owned->descriptor < 0) {
+      releaseTexture(bd, owned);
+      return false;
+    }
+    bd->texPool.RegisterTexture(owned->descriptor, &owned->texture, nullptr);
+    owned->handle = bd->device->GetTextureHandle(owned->descriptor, bd->samplerId);
+    tex->SetTexID(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(&owned->handle)));
+    tex->BackendUserData = owned;
+    g_creates.fetch_add(1, std::memory_order_relaxed);
+    g_texturesLive.fetch_add(1, std::memory_order_relaxed);
+    g_poolBytes.fetch_add(owned->poolBytes, std::memory_order_relaxed);
+    g_pixelBytes.fetch_add(static_cast<uint64_t>(tex->GetSizeInBytes()), std::memory_order_relaxed);
+    g_atlasWidth.store(static_cast<uint32_t>(tex->Width), std::memory_order_relaxed);
+    g_atlasHeight.store(static_cast<uint32_t>(tex->Height), std::memory_order_relaxed);
+    g_atlasBytesPerPixel.store(static_cast<uint32_t>(tex->BytesPerPixel), std::memory_order_relaxed);
+    return true;
+  }
+
+  // Writes texels ImGui changed. ImGui only writes regions no earlier draw sampled, so submissions still in flight
+  // keep reading what they read; the next recording invalidates the texture cache before it draws.
+  void uploadRect(NvnTexture *owned, ImTextureData *tex, int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) {
+      return;
+    }
+    nvn::CopyRegion region = {.xoffset = x, .yoffset = y, .zoffset = 0, .width = w, .height = h, .depth = 1};
+    owned->texture.WriteTexelsStrided(nullptr, &region, tex->GetPixelsAt(x, y), tex->GetPitch(), 0);
+    owned->texture.FlushTexels(nullptr, &region);
+    g_updates.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  void destroyTexture(NvnBackendData *bd, ImTextureData *tex) {
+    if (auto *owned = static_cast<NvnTexture *>(tex->BackendUserData)) {
+      g_texturesLive.fetch_sub(1, std::memory_order_relaxed);
+      g_poolBytes.fetch_sub(owned->poolBytes, std::memory_order_relaxed);
+      g_pixelBytes.fetch_sub(static_cast<uint64_t>(tex->GetSizeInBytes()), std::memory_order_relaxed);
+      g_destroys.fetch_add(1, std::memory_order_relaxed);
+      releaseTexture(bd, owned);
+    }
+    tex->SetTexID(ImTextureID_Invalid);
+    tex->BackendUserData = nullptr;
+    tex->SetStatus(ImTextureStatus_Destroyed);
+  }
+
+  }  // namespace
+
+  bool updateTexture(ImTextureData *tex) {
+    auto bd = getBackendData();
+    if (tex->Status == ImTextureStatus_WantCreate) {
+      if (!createTexture(bd, tex)) {
+        Logger::log("Texture create failed: %dx%d format %d.\n", tex->Width, tex->Height, (int) tex->Format);
+        return false;
+      }
+      uploadRect(static_cast<NvnTexture *>(tex->BackendUserData), tex, 0, 0, tex->Width, tex->Height);
+      tex->SetStatus(ImTextureStatus_OK);
+      bd->texturesTouched = true;
+    } else if (tex->Status == ImTextureStatus_WantUpdates) {
+      auto *owned = static_cast<NvnTexture *>(tex->BackendUserData);
+      if (owned != nullptr) {
+        for (const ImTextureRect &rect : tex->Updates) {
+          uploadRect(owned, tex, rect.x, rect.y, rect.w, rect.h);
+        }
+      }
+      tex->SetStatus(ImTextureStatus_OK);
+      bd->texturesTouched = true;
+    } else if (tex->Status == ImTextureStatus_WantDestroy) {
+      // ImGui no longer draws with it; wait until every submission recorded before now has completed.
+      auto *owned = static_cast<NvnTexture *>(tex->BackendUserData);
+      if (owned != nullptr && !owned->retiring) {
+        owned->retiring = true;
+        owned->retireAfter = ImguiDrawSlots::lastSerial();
+      }
+      if (owned == nullptr || ImguiDrawSlots::completedThrough(owned->retireAfter)) {
+        destroyTexture(bd, tex);
+      }
+    }
+    return true;
+  }
+
+  bool setupTextures() {
+
+    Logger::log("Setting up ImGui texture pools.\n");
 
     auto bd = getBackendData();
-
-    ImGuiIO &io = ImGui::GetIO();
 
     // init sampler and texture pools
 
@@ -328,44 +492,7 @@ namespace ImguiNvnBackend {
       return false;
     }
 
-    // convert imgui font texels
-
-    unsigned char *pixels;
-    int width, height, pixelByteSize;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height, &pixelByteSize);
-    int texPoolSize = pixelByteSize * width * height;
-
-    if (!MemoryPoolMaker::createPool(&bd->fontMemPool, ALIGN_UP(texPoolSize, 0x1000),
-                                     nvn::MemoryPoolFlags::CPU_UNCACHED | nvn::MemoryPoolFlags::GPU_CACHED)) {
-      Logger::log("Failed to Create Font Memory Pool!\n");
-      return false;
-    }
-
-    bd->texBuilder.SetDefaults()
-        .SetDevice(bd->device)
-        .SetTarget(nvn::TextureTarget::TARGET_2D)
-        .SetFormat(nvn::Format::RGBA8)
-        .SetSize2D(width, height)
-        .SetStorage(&bd->fontMemPool, 0);
-
-    if (!bd->fontTexture.Initialize(&bd->texBuilder)) {
-      Logger::log("Failed to Create Font Texture!\n");
-      return false;
-    }
-
-    // setup font texture
-
-    nvn::CopyRegion region = {
-        .xoffset = 0,
-        .yoffset = 0,
-        .zoffset = 0,
-        .width = bd->fontTexture.GetWidth(),
-        .height = bd->fontTexture.GetHeight(),
-        .depth = 1
-    };
-
-    bd->fontTexture.WriteTexels(nullptr, &region, pixels);
-    bd->fontTexture.FlushTexels(nullptr, &region);
+    // The textures themselves come from ImGui's requests in renderDrawData (updateTexture).
 
     bd->samplerBuilder.SetDefaults()
         .SetDevice(bd->device)
@@ -377,14 +504,8 @@ namespace ImguiNvnBackend {
       return false;
     }
 
-    bd->textureId = 257;
     bd->samplerId = 257;
-
-    bd->texPool.RegisterTexture(bd->textureId, &bd->fontTexture, nullptr);
     bd->samplerPool.RegisterSampler(bd->samplerId, &bd->fontSampler);
-
-    bd->fontTexHandle = bd->device->GetTextureHandle(bd->textureId, bd->samplerId);
-    io.Fonts->SetTexID(&bd->fontTexHandle);
 
     Logger::log("Finished.\n");
 
@@ -464,6 +585,12 @@ namespace ImguiNvnBackend {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+    // The static set is rasterized at setup, other glyphs when first drawn and dropped when they leave the screen
+    // (font_setup); renderDrawData honours ImGui's texture requests.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    ImGuiPlatformIO &platformIo = ImGui::GetPlatformIO();
+    platformIo.Renderer_TextureMaxWidth = ImguiFontSetup::kDefaultLimits.texMaxWidth;
+    platformIo.Renderer_TextureMaxHeight = ImguiFontSetup::kDefaultLimits.texMaxHeight;
 
     io.DisplaySize = ImVec2(IMGUI_SMASH_VIEWPORT_WIDTH, IMGUI_SMASH_VIEWPORT_HEIGHT); // default size
 
@@ -480,10 +607,16 @@ namespace ImguiNvnBackend {
     bd->isInitialized = false;
 
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
-    io.Fonts->AddFontFromMemoryCompressedTTF(
-        JetBrainsMonoNL_compressed_data, JetBrainsMonoNL_compressed_size,
-        18.f
-    );
+    {
+      ImguiFontSetup::SharedFont shared[ImguiFontSetup::kMaxSharedFonts];
+      const int count = ImguiSharedFonts::query(shared, ImguiFontSetup::kMaxSharedFonts);
+      if (ImguiFontSetup::setup(io.Fonts, shared, count) == nullptr) {
+        Logger::log("Failed to add the overlay font!\n");
+      }
+      const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
+      Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
+                  fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
+    }
 #endif
 
     if (createShaders()) {
@@ -495,12 +628,12 @@ namespace ImguiNvnBackend {
         // Setup Shaders crashes
         // Setup Font crashes
       if (setupShaders(bd->imguiShaderBinary.ptr, bd->imguiShaderBinary.size)) {
-        if(setupFont()) {
+        if(setupTextures()) {
             Logger::log("Rendering Setup!\n");
     
             bd->isInitialized = true;
         } else {
-            Logger::log("Failed to Setup Font!\n");
+            Logger::log("Failed to Setup Textures!\n");
             return;
         }
       } else {
@@ -513,6 +646,14 @@ namespace ImguiNvnBackend {
 
   void ShutdownBackend() {
     auto *bd = getBackendData();
+    // Textures still read by a pending submission are left allocated rather than freed under the GPU.
+    if (ImguiDrawSlots::completedThrough(ImguiDrawSlots::lastSerial())) {
+      for (ImTextureData *tex : ImGui::GetPlatformIO().Textures) {
+        if (tex->BackendUserData != nullptr) {
+          destroyTexture(bd, tex);
+        }
+      }
+    }
     ImguiDrawSlots::shutdown(bd->device);
     
     if (bd->vtxBuffer) {
@@ -709,6 +850,20 @@ namespace ImguiNvnBackend {
       return 0;
     }
 
+    // Texture requests first. A draw command naming a texture that was never created would trip ImGui's
+    // GetTexID assert, so a failed create skips this frame; ImGui repeats the request next frame.
+    if (drawData->Textures != nullptr) {
+      bool created = true;
+      for (ImTextureData *tex : *drawData->Textures) {
+        if (tex->Status != ImTextureStatus_OK && !updateTexture(tex)) {
+          created = false;
+        }
+      }
+      if (!created) {
+        return 0;
+      }
+    }
+
     size_t totalVtxSize = static_cast<size_t>(drawData->TotalVtxCount) * sizeof(ImDrawVert);
     size_t totalIdxSize = static_cast<size_t>(drawData->TotalIdxCount) * sizeof(ImDrawIdx);
     const int slot = ImguiDrawSlots::begin(bd->device, totalVtxSize, totalIdxSize);
@@ -733,6 +888,11 @@ namespace ImguiNvnBackend {
     // Setup is one uninterruptible group. Its largest immediate update is the
     // 64-byte projection matrix. Later checks stop further groups after overflow.
     if (!ImguiDrawSlots::overflowed(slot)) {
+      if (bd->texturesTouched) {
+        // CPU-written texels and newly registered descriptors become visible to this recording's draws.
+        cmd->Barrier(nvn::BarrierBits(nvn::BarrierBits::INVALIDATE_TEXTURE) |
+                     nvn::BarrierBits::INVALIDATE_TEXTURE_DESCRIPTOR);
+      }
       cmd->BindProgram(&bd->shaderProgram, nvn::ShaderStageBits::VERTEX | nvn::ShaderStageBits::FRAGMENT);
       cmd->BindUniformBuffer(nvn::ShaderStage::VERTEX, 0, *uniform, UBOSIZE);
       cmd->UpdateUniformBuffer(*uniform, UBOSIZE, 0, sizeof(projMatrix), &projMatrix);
@@ -795,6 +955,52 @@ namespace ImguiNvnBackend {
     if (ImguiDrawSlots::active() != slot) {
       return 0;
     }
+    bd->texturesTouched = false;
     return handle;
   }
+}
+
+extern "C" int imgui_smash_font_stats(ImguiSmashFontStats *out) {
+  if (out == nullptr) {
+    return 0;
+  }
+  const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
+  *out = {};
+  out->version = IMGUI_SMASH_FONT_STATS_VERSION;
+  out->size = static_cast<uint32_t>(sizeof(ImguiSmashFontStats));
+  out->sharedSources = static_cast<uint32_t>(fonts.sharedSources);
+  out->rejectedSources = static_cast<uint32_t>(fonts.rejectedSources);
+  out->fallbackChar = static_cast<uint32_t>(fonts.fallbackChar);
+  out->staticGlyphs = static_cast<uint32_t>(fonts.staticGlyphs);
+  out->dynamicGlyphs = static_cast<uint32_t>(fonts.dynamicGlyphs);
+  out->dynamicVisible = static_cast<uint32_t>(fonts.dynamicVisible);
+  out->dynamicLoads = static_cast<uint64_t>(fonts.dynamicLoads);
+  out->refusals = static_cast<uint64_t>(fonts.refusals);
+  out->rebuilds = static_cast<uint64_t>(fonts.rebuilds);
+  out->misplaced = static_cast<uint64_t>(fonts.misplaced);
+  out->indexBytes = static_cast<uint64_t>(fonts.indexBytes);
+  out->atlasWidth = ImguiNvnBackend::g_atlasWidth.load(std::memory_order_relaxed);
+  out->atlasHeight = ImguiNvnBackend::g_atlasHeight.load(std::memory_order_relaxed);
+  out->atlasBytesPerPixel = ImguiNvnBackend::g_atlasBytesPerPixel.load(std::memory_order_relaxed);
+  out->texturesLive = ImguiNvnBackend::g_texturesLive.load(std::memory_order_relaxed);
+  out->indexPaged = fonts.indexPaged ? 1u : 0u;
+  out->indexPages = static_cast<uint32_t>(fonts.indexPages);
+  out->pixelBytes = ImguiNvnBackend::g_pixelBytes.load(std::memory_order_relaxed);
+  out->poolBytes = ImguiNvnBackend::g_poolBytes.load(std::memory_order_relaxed);
+  out->creates = ImguiNvnBackend::g_creates.load(std::memory_order_relaxed);
+  out->updates = ImguiNvnBackend::g_updates.load(std::memory_order_relaxed);
+  out->destroys = ImguiNvnBackend::g_destroys.load(std::memory_order_relaxed);
+  return 1;
+}
+
+extern "C" int imgui_smash_font_dynamic_set(uint32_t *out, uint32_t cap) {
+  if (out == nullptr && cap != 0) {
+    return 0;
+  }
+  return ImguiFontSetup::dynamicSet(out, cap > 0x7fffffffu ? 0x7fffffff : static_cast<int>(cap));
+}
+
+extern "C" int imgui_smash_font_use_paged_index(int enabled) {
+  ImguiFontSetup::usePagedIndex(enabled != 0);
+  return 1;
 }

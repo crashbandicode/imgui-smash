@@ -1465,6 +1465,7 @@ typedef enum {
     ImFontAtlasFlags_NoPowerOfTwoHeight = 1 << 0,
     ImFontAtlasFlags_NoMouseCursors = 1 << 1,
     ImFontAtlasFlags_NoBakedLines = 1 << 2,
+    ImFontAtlasFlags_PagedCodepointIndex = 1 << 3,
 }ImFontAtlasFlags_;
 typedef struct ImVector_ImFontPtr {int Size;int Capacity;ImFont** Data;} ImVector_ImFontPtr;
 
@@ -1525,6 +1526,7 @@ struct ImFontBaked
     unsigned int WantDestroy:1;
     unsigned int LoadNoFallback:1;
     unsigned int LoadNoRenderOnLayout:1;
+    unsigned int IndexPaged:1;
     int LastUsedFrame;
     ImGuiID BakedId;
     ImFont* OwnerFont;

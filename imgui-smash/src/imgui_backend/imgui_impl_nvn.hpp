@@ -8,6 +8,7 @@
 #include "nvn_CppMethods.h"
 #include "types.h"
 #include "MemoryBuffer.h"
+#include "texture_rules.hpp"
 
 #include "os/os_tick.hpp"
 
@@ -54,21 +55,20 @@ namespace ImguiNvnBackend {
     nvn::VertexStreamState streamState;
     nvn::VertexAttribState attribStates[3];
 
-    // font data
+    // texture data: ImGui's textures (the font atlas) are created, updated and destroyed on request
+    // (ImGuiBackendFlags_RendererHasTextures), each with its own pool and descriptor in texPool.
 
     nvn::TexturePool texPool;
     nvn::SamplerPool samplerPool;
 
     nvn::MemoryPool sampTexMemPool;
 
-    nvn::MemoryPool fontMemPool;
-
     int samplerId;
     nvn::Sampler fontSampler;
-    int textureId;
-    nvn::Texture fontTexture;
 
-    nvn::TextureHandle fontTexHandle;
+    TextureDescriptorIds textureIds;
+    // Set when texels or descriptors changed since the last recorded frame: that frame invalidates the GPU caches.
+    bool texturesTouched = false;
 
     // render data
 
@@ -99,7 +99,10 @@ namespace ImguiNvnBackend {
 
   bool setupShaders(u8 *shaderBinary, ulong binarySize);
 
-  bool setupFont();
+  bool setupTextures();
+
+  // Honours one ImTextureData request (create, update, destroy). False when a create failed.
+  bool updateTexture(ImTextureData *tex);
 
   void InitBackend(const NvnBackendInitInfo &initInfo);
 

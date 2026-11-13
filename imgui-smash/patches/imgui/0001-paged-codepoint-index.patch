@@ -1,0 +1,294 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: crashbandicode <84094612+crashbandicode@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 13:08:53 -0500
+Subject: [PATCH] Fonts: optional paged per-codepoint index (imgui-smash)
+
+ImFontBaked's per-codepoint index (IndexAdvanceX, IndexLookup) is one array
+up to the highest codepoint loaded: 6 bytes per codepoint, about 330 KB once
+a Hangul glyph is loaded. With ImFontAtlasFlags_PagedCodepointIndex set on
+the atlas, bakes created afterwards keep it in 256-codepoint pages instead,
+allocated only where a codepoint is indexed:
+
+- IndexLookup holds a page map (IM_FONTBAKED_INDEX_PAGE_COUNT entries, the
+  page's slot + 1, 0 for none) followed by each page's 256 lookups;
+  IndexAdvanceX holds each page's 256 advances.
+- ImFontBaked::IndexPaged (a spare bit beside LoadNoRenderOnLayout) records
+  the mode at creation. No struct changes size or offset.
+- Every read goes through ImFontBaked::IndexGetAdvanceX/IndexGetLookup
+  (FindGlyph, FindGlyphNoFallback, IsGlyphLoaded, GetCharAdvance,
+  CalcTextSizeA, ImFontCalcWordWrapPositionEx), every write through
+  ImFontAtlasBakedSetIndex (glyph added, advance-only load, not-found mark,
+  glyph discarded). Without the flag both take the dense branch and behave
+  as before.
+- Empty vectors still mean "nothing indexed", so PushPasswordFont's swap is
+  unchanged.
+
+diff --git a/imgui.h b/imgui.h
+index f038f68f6..529f6cafd 100644
+--- a/imgui.h
++++ b/imgui.h
+@@ -3627,6 +3627,7 @@ enum ImFontAtlasFlags_
+     ImFontAtlasFlags_NoPowerOfTwoHeight = 1 << 0,   // Don't round the height to next power of two
+     ImFontAtlasFlags_NoMouseCursors     = 1 << 1,   // Don't build software mouse cursors into the atlas (save a little texture memory)
+     ImFontAtlasFlags_NoBakedLines       = 1 << 2,   // Don't build thick line textures into the atlas (save a little texture memory, allow support for point/nearest filtering). The AntiAliasedLinesUseTex features uses them, otherwise they will be rendered using polygons (more expensive for CPU/GPU).
++    ImFontAtlasFlags_PagedCodepointIndex = 1 << 3,  // [imgui-smash] Fonts baked from now on keep their per-codepoint index in 256-codepoint pages allocated where glyphs exist, instead of one array up to the highest codepoint (ImFontBaked::IndexPaged).
+ };
+ 
+ // Load and rasterize multiple TTF/OTF fonts into a same texture. The font atlas will build a single texture holding:
+@@ -3818,6 +3819,7 @@ struct ImFontBaked
+     unsigned int                WantDestroy:1;         // 0  //     // Queued for destroy
+     unsigned int                LoadNoFallback:1;      // 0  //     // Disable loading fallback in lower-level calls.
+     unsigned int                LoadNoRenderOnLayout:1;// 0  //     // Enable a two-steps mode where CalcTextSize() calls will load AdvanceX *without* rendering/packing glyphs. Only advantageous if you know that the glyph is unlikely to actually be rendered, otherwise it is slower because we'd do one query on the first CalcTextSize and one query on the first Draw.
++    unsigned int                IndexPaged:1;          // 0  //     // [imgui-smash] Set at creation from ImFontAtlasFlags_PagedCodepointIndex. IndexLookup[] then holds a page map (IM_FONTBAKED_INDEX_PAGE_COUNT entries, page slot + 1) followed by each page's lookups, and IndexAdvanceX[] each page's advances. Read the index through IndexGetAdvanceX()/IndexGetLookup() only.
+     int                         LastUsedFrame;         // 4  //     // Record of that time this was bounds
+     ImGuiID                     BakedId;            // 4     //     // Unique ID for this baked storage
+     ImFont*                     OwnerFont;          // 4-8   // in  // Parent font
+@@ -3830,8 +3832,35 @@ struct ImFontBaked
+     IMGUI_API ImFontGlyph*      FindGlyphNoFallback(ImWchar c);     // Return NULL if glyph doesn't exist
+     IMGUI_API float             GetCharAdvance(ImWchar c);
+     IMGUI_API bool              IsGlyphLoaded(ImWchar c);
++
++    // [imgui-smash] The per-codepoint index, dense or paged (IndexPaged). -1.0f / 0xFFFF (unused) when not loaded.
++    inline float                IndexGetAdvanceX(unsigned int c) const;
++    inline ImU16                IndexGetLookup(unsigned int c) const;
+ };
+ 
++// [imgui-smash] Paged per-codepoint index: 256-codepoint pages, a page allocated when a codepoint in it is indexed.
++#define IM_FONTBAKED_INDEX_PAGE_SHIFT   8
++#define IM_FONTBAKED_INDEX_PAGE_SIZE    (1 << IM_FONTBAKED_INDEX_PAGE_SHIFT)
++#define IM_FONTBAKED_INDEX_PAGE_COUNT   ((IM_UNICODE_CODEPOINT_MAX >> IM_FONTBAKED_INDEX_PAGE_SHIFT) + 1)
++
++inline float ImFontBaked::IndexGetAdvanceX(unsigned int c) const
++{
++    if (!IndexPaged)
++        return (c < (unsigned int)IndexAdvanceX.Size) ? IndexAdvanceX.Data[c] : -1.0f;
++    const unsigned int page = c >> IM_FONTBAKED_INDEX_PAGE_SHIFT;
++    const unsigned int slot = (page < IM_FONTBAKED_INDEX_PAGE_COUNT && page < (unsigned int)IndexLookup.Size) ? IndexLookup.Data[page] : 0;
++    return slot ? IndexAdvanceX.Data[((slot - 1) << IM_FONTBAKED_INDEX_PAGE_SHIFT) | (c & (IM_FONTBAKED_INDEX_PAGE_SIZE - 1))] : -1.0f;
++}
++
++inline ImU16 ImFontBaked::IndexGetLookup(unsigned int c) const
++{
++    if (!IndexPaged)
++        return (c < (unsigned int)IndexLookup.Size) ? IndexLookup.Data[c] : (ImU16)0xFFFF;
++    const unsigned int page = c >> IM_FONTBAKED_INDEX_PAGE_SHIFT;
++    const unsigned int slot = (page < IM_FONTBAKED_INDEX_PAGE_COUNT && page < (unsigned int)IndexLookup.Size) ? IndexLookup.Data[page] : 0;
++    return slot ? IndexLookup.Data[IM_FONTBAKED_INDEX_PAGE_COUNT + ((slot - 1) << IM_FONTBAKED_INDEX_PAGE_SHIFT) + (c & (IM_FONTBAKED_INDEX_PAGE_SIZE - 1))] : (ImU16)0xFFFF;
++}
++
+ // Font flags
+ // (in future versions as we redesign font loading API, this will become more important and better documented. for now please consider this as internal/advanced use)
+ enum ImFontFlags_
+diff --git a/imgui_draw.cpp b/imgui_draw.cpp
+index 19209fed7..95580963d 100644
+--- a/imgui_draw.cpp
++++ b/imgui_draw.cpp
+@@ -3836,8 +3836,7 @@ void ImFontAtlasBakedDiscardFontGlyph(ImFontAtlas* atlas, ImFont* font, ImFontBa
+     IM_ASSERT(font->FallbackChar != c && font->EllipsisChar != c); // Unsupported for simplicity
+     IM_ASSERT(glyph >= baked->Glyphs.Data && glyph < baked->Glyphs.Data + baked->Glyphs.Size);
+     IM_UNUSED(font);
+-    baked->IndexLookup[c] = IM_FONTGLYPH_INDEX_UNUSED;
+-    baked->IndexAdvanceX[c] = baked->FallbackAdvanceX;
++    ImFontAtlasBakedSetIndex(baked, c, baked->FallbackAdvanceX, IM_FONTGLYPH_INDEX_UNUSED);
+ }
+ 
+ ImFontBaked* ImFontAtlasBakedAdd(ImFontAtlas* atlas, ImFont* font, float font_size, float font_rasterizer_density, ImGuiID baked_id)
+@@ -3849,6 +3848,7 @@ ImFontBaked* ImFontAtlasBakedAdd(ImFontAtlas* atlas, ImFont* font, float font_si
+     baked->BakedId = baked_id;
+     baked->OwnerFont = font;
+     baked->LastUsedFrame = atlas->Builder->FrameCount;
++    baked->IndexPaged = (atlas->Flags & ImFontAtlasFlags_PagedCodepointIndex) != 0;
+ 
+     // Initialize backend data
+     size_t loader_data_size = 0;
+@@ -4482,6 +4482,7 @@ static bool ImFontAtlasBuildAcceptCodepointForSource(ImFontConfig* src, ImWchar
+ 
+ static void ImFontBaked_BuildGrowIndex(ImFontBaked* baked, int new_size)
+ {
++    IM_ASSERT(!baked->IndexPaged);
+     IM_ASSERT(baked->IndexAdvanceX.Size == baked->IndexLookup.Size);
+     if (new_size <= baked->IndexLookup.Size)
+         return;
+@@ -4489,6 +4490,44 @@ static void ImFontBaked_BuildGrowIndex(ImFontBaked* baked, int new_size)
+     baked->IndexLookup.resize(new_size, IM_FONTGLYPH_INDEX_UNUSED);
+ }
+ 
++// [imgui-smash] Every write to the per-codepoint index. 'lookup' < 0 keeps the current lookup entry.
++// Dense: grows the arrays to the codepoint. Paged: allocates the page map, then the codepoint's page, sized exactly.
++void ImFontAtlasBakedSetIndex(ImFontBaked* baked, unsigned int codepoint, float advance_x, int lookup)
++{
++    IM_ASSERT(codepoint <= IM_UNICODE_CODEPOINT_MAX);
++    if (!baked->IndexPaged)
++    {
++        ImFontBaked_BuildGrowIndex(baked, (int)codepoint + 1);
++        baked->IndexAdvanceX.Data[codepoint] = advance_x;
++        if (lookup >= 0)
++            baked->IndexLookup.Data[codepoint] = (ImU16)lookup;
++        return;
++    }
++    const int page_size = IM_FONTBAKED_INDEX_PAGE_SIZE;
++    if (baked->IndexLookup.Size == 0)
++    {
++        IM_ASSERT(baked->IndexAdvanceX.Size == 0);
++        baked->IndexLookup.reserve(IM_FONTBAKED_INDEX_PAGE_COUNT);
++        baked->IndexLookup.resize(IM_FONTBAKED_INDEX_PAGE_COUNT, (ImU16)0);
++    }
++    IM_ASSERT(baked->IndexLookup.Size == IM_FONTBAKED_INDEX_PAGE_COUNT + baked->IndexAdvanceX.Size);
++    const unsigned int page = codepoint >> IM_FONTBAKED_INDEX_PAGE_SHIFT;
++    unsigned int slot = baked->IndexLookup.Data[page];
++    if (slot == 0)
++    {
++        slot = (unsigned int)(baked->IndexAdvanceX.Size / page_size) + 1;
++        baked->IndexLookup.reserve(baked->IndexLookup.Size + page_size);
++        baked->IndexLookup.resize(baked->IndexLookup.Size + page_size, IM_FONTGLYPH_INDEX_UNUSED);
++        baked->IndexAdvanceX.reserve(baked->IndexAdvanceX.Size + page_size);
++        baked->IndexAdvanceX.resize(baked->IndexAdvanceX.Size + page_size, -1.0f);
++        baked->IndexLookup.Data[page] = (ImU16)slot;
++    }
++    const int i = (int)((slot - 1) << IM_FONTBAKED_INDEX_PAGE_SHIFT) + (int)(codepoint & (IM_FONTBAKED_INDEX_PAGE_SIZE - 1));
++    baked->IndexAdvanceX.Data[i] = advance_x;
++    if (lookup >= 0)
++        baked->IndexLookup.Data[IM_FONTBAKED_INDEX_PAGE_COUNT + i] = (ImU16)lookup;
++}
++
+ static void ImFontAtlas_FontHookRemapCodepoint(ImFontAtlas* atlas, ImFont* font, ImWchar* c)
+ {
+     IM_UNUSED(atlas);
+@@ -4561,9 +4600,7 @@ static ImFontGlyph* ImFontBaked_BuildLoadGlyph(ImFontBaked* baked, ImWchar codep
+         ImFontAtlasBuildSetupFontBakedFallback(baked);
+ 
+     // Mark index as not found, so we don't attempt the search twice
+-    ImFontBaked_BuildGrowIndex(baked, codepoint + 1);
+-    baked->IndexAdvanceX[codepoint] = baked->FallbackAdvanceX;
+-    baked->IndexLookup[codepoint] = IM_FONTGLYPH_INDEX_NOT_FOUND;
++    ImFontAtlasBakedSetIndex(baked, codepoint, baked->FallbackAdvanceX, IM_FONTGLYPH_INDEX_NOT_FOUND);
+     return NULL;
+ }
+ 
+@@ -5231,9 +5268,7 @@ ImFontGlyph* ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked
+ 
+     // Update lookup tables
+     const int codepoint = glyph->Codepoint;
+-    ImFontBaked_BuildGrowIndex(baked, codepoint + 1);
+-    baked->IndexAdvanceX[codepoint] = glyph->AdvanceX;
+-    baked->IndexLookup[codepoint] = (ImU16)glyph_idx;
++    ImFontAtlasBakedSetIndex(baked, (unsigned int)codepoint, glyph->AdvanceX, glyph_idx);
+     const int page_n = codepoint / 8192;
+     baked->OwnerFont->Used8kPagesMap[page_n >> 3] |= 1 << (page_n & 7);
+ 
+@@ -5259,8 +5294,7 @@ void ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* bake
+         advance_x += src->GlyphExtraAdvanceX;
+     }
+ 
+-    ImFontBaked_BuildGrowIndex(baked, codepoint + 1);
+-    baked->IndexAdvanceX[codepoint] = advance_x;
++    ImFontAtlasBakedSetIndex(baked, codepoint, advance_x, -1);
+ }
+ 
+ // Copy to texture, post-process and queue update for backend
+@@ -5282,14 +5316,11 @@ void ImFont::AddRemapChar(ImWchar from_codepoint, ImWchar to_codepoint)
+ // Find glyph, load if necessary, return fallback if missing
+ ImFontGlyph* ImFontBaked::FindGlyph(ImWchar c)
+ {
+-    if (c < (size_t)IndexLookup.Size) IM_LIKELY
+-    {
+-        const int i = (int)IndexLookup.Data[c];
+-        if (i == IM_FONTGLYPH_INDEX_NOT_FOUND)
+-            return &Glyphs.Data[FallbackGlyphIndex];
+-        if (i != IM_FONTGLYPH_INDEX_UNUSED)
+-            return &Glyphs.Data[i];
+-    }
++    const int i = (int)IndexGetLookup(c);
++    if (i == IM_FONTGLYPH_INDEX_NOT_FOUND)
++        return &Glyphs.Data[FallbackGlyphIndex];
++    if (i != IM_FONTGLYPH_INDEX_UNUSED) IM_LIKELY
++        return &Glyphs.Data[i];
+     ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c, NULL);
+     return glyph ? glyph : &Glyphs.Data[FallbackGlyphIndex];
+ }
+@@ -5297,14 +5328,11 @@ ImFontGlyph* ImFontBaked::FindGlyph(ImWchar c)
+ // Attempt to load but when missing, return NULL instead of FallbackGlyph
+ ImFontGlyph* ImFontBaked::FindGlyphNoFallback(ImWchar c)
+ {
+-    if (c < (size_t)IndexLookup.Size) IM_LIKELY
+-    {
+-        const int i = (int)IndexLookup.Data[c];
+-        if (i == IM_FONTGLYPH_INDEX_NOT_FOUND)
+-            return NULL;
+-        if (i != IM_FONTGLYPH_INDEX_UNUSED)
+-            return &Glyphs.Data[i];
+-    }
++    const int i = (int)IndexGetLookup(c);
++    if (i == IM_FONTGLYPH_INDEX_NOT_FOUND)
++        return NULL;
++    if (i != IM_FONTGLYPH_INDEX_UNUSED) IM_LIKELY
++        return &Glyphs.Data[i];
+     LoadNoFallback = true; // This is actually a rare call, not done in hot-loop, so we prioritize not adding extra cruft to ImFontBaked_BuildLoadGlyph() call sites.
+     ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c, NULL);
+     LoadNoFallback = false;
+@@ -5313,15 +5341,8 @@ ImFontGlyph* ImFontBaked::FindGlyphNoFallback(ImWchar c)
+ 
+ bool ImFontBaked::IsGlyphLoaded(ImWchar c)
+ {
+-    if (c < (size_t)IndexLookup.Size) IM_LIKELY
+-    {
+-        const int i = (int)IndexLookup.Data[c];
+-        if (i == IM_FONTGLYPH_INDEX_NOT_FOUND)
+-            return false;
+-        if (i != IM_FONTGLYPH_INDEX_UNUSED)
+-            return true;
+-    }
+-    return false;
++    const int i = (int)IndexGetLookup(c);
++    return i != IM_FONTGLYPH_INDEX_NOT_FOUND && i != IM_FONTGLYPH_INDEX_UNUSED;
+ }
+ 
+ // This is not fast query
+@@ -5342,13 +5363,10 @@ bool ImFont::IsGlyphInFont(ImWchar c)
+ IM_MSVC_RUNTIME_CHECKS_OFF
+ float ImFontBaked::GetCharAdvance(ImWchar c)
+ {
+-    if ((int)c < IndexAdvanceX.Size)
+-    {
+-        // Missing glyphs fitting inside index will have stored FallbackAdvanceX already.
+-        const float x = IndexAdvanceX.Data[c];
+-        if (x >= 0.0f)
+-            return x;
+-    }
++    // Missing glyphs fitting inside index will have stored FallbackAdvanceX already.
++    const float x = IndexGetAdvanceX(c);
++    if (x >= 0.0f)
++        return x;
+     return ImFontBaked_BuildLoadGlyphAdvanceX(this, c);
+ }
+ IM_MSVC_RUNTIME_CHECKS_RESTORE
+@@ -5535,7 +5553,7 @@ const char* ImFontCalcWordWrapPositionEx(ImFont* font, float size, const char* t
+         }
+ 
+         // Optimized inline version of 'float char_width = GetCharAdvance((ImWchar)c);'
+-        float char_width = (c < (unsigned int)baked->IndexAdvanceX.Size) ? baked->IndexAdvanceX.Data[c] : -1.0f;
++        float char_width = baked->IndexGetAdvanceX(c);
+         if (char_width < 0.0f)
+             char_width = BuildLoadGlyphGetAdvanceOrFallback(baked, c);
+ 
+@@ -5666,7 +5684,7 @@ ImVec2 ImFontCalcTextSizeEx(ImFont* font, float size, float max_width, float wra
+             continue;
+ 
+         // Optimized inline version of 'float char_width = GetCharAdvance((ImWchar)c);'
+-        float char_width = (c < (unsigned int)baked->IndexAdvanceX.Size) ? baked->IndexAdvanceX.Data[c] : -1.0f;
++        float char_width = baked->IndexGetAdvanceX(c);
+         if (char_width < 0.0f)
+             char_width = BuildLoadGlyphGetAdvanceOrFallback(baked, c);
+         char_width *= scale;
+diff --git a/imgui_internal.h b/imgui_internal.h
+index f91461ede..225f0f024 100644
+--- a/imgui_internal.h
++++ b/imgui_internal.h
+@@ -3925,6 +3925,7 @@ IMGUI_API void              ImFontAtlasBakedDiscard(ImFontAtlas* atlas, ImFont*
+ IMGUI_API ImFontGlyph*      ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, const ImFontGlyph* in_glyph);
+ IMGUI_API void              ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, ImWchar codepoint, float advance_x);
+ IMGUI_API void              ImFontAtlasBakedDiscardFontGlyph(ImFontAtlas* atlas, ImFont* font, ImFontBaked* baked, ImFontGlyph* glyph);
++IMGUI_API void              ImFontAtlasBakedSetIndex(ImFontBaked* baked, unsigned int codepoint, float advance_x, int lookup); // [imgui-smash] lookup < 0: keep
+ IMGUI_API void              ImFontAtlasBakedSetFontGlyphBitmap(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, ImFontGlyph* glyph, ImTextureRect* r, const unsigned char* src_pixels, ImTextureFormat src_fmt, int src_pitch);
+ 
+ IMGUI_API void              ImFontAtlasPackInit(ImFontAtlas* atlas);

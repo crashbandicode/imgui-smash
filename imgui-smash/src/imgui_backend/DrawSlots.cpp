@@ -6,6 +6,7 @@
 #include "helpers/assert.hpp"
 #include "helpers/memoryHelper.h"
 #include "imgui.h"
+#include "texture_rules.hpp"
 
 #include <atomic>
 #include <cstring>
@@ -49,6 +50,9 @@ DrawSlotRules g_rules;
 bool g_attempted = false;
 bool g_closed = false;
 int g_active = -1;
+// Serial of the last recording begun, and of the recording each slot holds. Retired textures wait on them.
+uint64_t g_serial = 0;
+uint64_t g_slotSerial[DrawSlotRules::kCount]{};
 
 std::atomic<uint64_t> g_submitted{0};
 std::atomic<uint64_t> g_reused{0};
@@ -316,6 +320,7 @@ int begin(nvn::Device *device, size_t vertexBytes, size_t indexBytes) {
     return -1;
   }
   g_rules.markRecorded(index);
+  g_slotSerial[index] = ++g_serial;
   if (!ensureGeometry(slot.vertex, vertexBytes) || !ensureGeometry(slot.indexBuffer, indexBytes)) {
     g_rules.cancelUnsubmitted(index);
     g_geometrySkips.fetch_add(1, std::memory_order_relaxed);
@@ -383,6 +388,34 @@ void fenceAfterSubmit(int slot, nvn::Queue *queue) {
 }
 
 int active() { return g_active; }
+
+uint64_t lastSerial() { return g_serial; }
+
+bool completedThrough(uint64_t serial) {
+  SlotRecord records[DrawSlotRules::kCount];
+  for (int i = 0; i < DrawSlotRules::kCount; ++i) {
+    bool pending = false;
+    switch (g_rules.phase[i]) {
+      case DrawSlotPhase::Free:
+        break;
+      case DrawSlotPhase::Submitted: {
+        if (!g_slots[i].syncLive) {
+          pending = true;
+          break;
+        }
+        const int wait = static_cast<int>(static_cast<nvn::SyncWaitResult::Enum>(g_slots[i].sync.Wait(0)));
+        pending = wait != 0 && wait != 1;
+        break;
+      }
+      case DrawSlotPhase::Recorded:
+      case DrawSlotPhase::Failed:
+        pending = true;
+        break;
+    }
+    records[i] = {g_slotSerial[i], pending};
+  }
+  return retireReady(serial, records, DrawSlotRules::kCount);
+}
 
 void shutdown(nvn::Device *device) {
   if (g_closed) {

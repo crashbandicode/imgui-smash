@@ -47,6 +47,54 @@ new release package. See [the evidence](docs/VALIDATION.md).
 - **Gamepad navigation off by default (1.0.2).** L3 + R3 no longer toggles
   ImGui gamepad navigation unless `config.ini` enables it (below).
 
+- **Text beyond ASCII (branch `unicode-shared-font`).**
+  - **Fonts.** JetBrains Mono's ASCII subset stays the first font at 18 px.
+    The console's system shared fonts (`nn::pl`: Standard with Latin and
+    Japanese, Chinese, Korean, Nintendo Extended) are merged after it, read in
+    place from the memory the system maps, not copied.
+  - **Static set.** ASCII, Latin-1 Supplement and Latin Extended-A
+    (European names) are rasterized once at start-up and never change.
+  - **Dynamic set.** Any other character is rasterized when a string draws
+    it. Measuring text loads advances only.
+  - **Drops between frames.** Between two frames, the host reads the last
+    frame's draw data. Once a dynamic glyph that was on screen has gone about
+    a second without a draw, it drops every dynamic glyph and repacks the
+    atlas into a new texture through the backend's texture requests
+    (`ImGuiBackendFlags_RendererHasTextures`). What is still on screen loads
+    again in the next frame, so the dynamic set is the text on screen, not
+    everything ever shown.
+  - **Atlas.** Alpha8 (an R8 texture sampled as white with that alpha),
+    512x128 to start, at most 1024x1024. No dynamic glyph is rasterized once
+    packing would pass half of it, so ImGui's "Out of texture memory" assert
+    cannot fire.
+  - **Fallback.** A missing character draws the fallback glyph (U+FFFD when a
+    font has it) for that character only.
+  - **Stats.** `imgui_smash_font_stats` reports the static and dynamic
+    counts, rebuilds and texture and index bytes;
+    `imgui_smash_font_dynamic_set` lists the dynamic set.
+- **Paged codepoint index (branch `sparse-codepoint-index`).**
+  - **The cost it removes.** Dear ImGui indexes a font's glyphs in two
+    arrays with an entry per codepoint up to the highest one loaded:
+    6 bytes per codepoint, about 330 KB once a Hangul glyph is loaded.
+  - **The patch.** `patches/imgui/0001-paged-codepoint-index.patch` (applied
+    by CMake and `host-tests/run.py` to a copy of `extern/imgui`; the
+    submodule stays upstream) adds `ImFontAtlasFlags_PagedCodepointIndex`.
+    Bakes made with it keep the index in 256-codepoint pages, allocated
+    only where glyphs are: a 512-byte page map plus 1.5 KB per page in use.
+    Every read and write of the index goes through two accessors and one
+    setter. No struct changes size or offset.
+  - **Opt-in.** `imgui_smash_font_use_paged_index(1)`, called before
+    `imgui_smash_init`, turns it on for the overlay's fonts. It is off by
+    default: a plugin built with an unpatched Dear ImGui reads the index
+    directly, so a standalone host whose context it may share stays dense.
+  - **Tests.** `paged_index_test` builds the patched and the unpatched Dear
+    ImGui. It requires identical glyphs, advances, sizes, wraps and vertices
+    from the dense and the paged index, and times `CalcTextSize`.
+    `font_setup_test` runs every overlay test in both modes.
+- **Releases carry both artifacts.** `libimgui_smash.nro` (the standalone
+  host) and `libimgui_smash.a` (the archive Deluxe links). The pinned pair
+  for each Deluxe version is recorded in Deluxe's `docs/IMGUI_DEPENDENCY.md`.
+
 ## Installing the host (plugin user)
 
 Only needed when another plugin draws its own windows (for example Elite Legal
@@ -94,6 +142,15 @@ pwsh -NoLogo -NoProfile -NonInteractive -File ./Build-Standalone.ps1 -Action arc
 pwsh -NoLogo -NoProfile -NonInteractive -File ./Build-Standalone.ps1 -Action clippy
 pwsh -NoLogo -NoProfile -NonInteractive -File ./Build-Standalone.ps1 -Action skyline
 ```
+
+Host tests (g++ with C++23; warnings are errors for this repository's code):
+
+```text
+python3 -I imgui-smash/host-tests/run.py
+```
+
+`host-tests/fixtures/label-fixture.ttf` is a TrueType subset of Noto Sans CJK
+JP (SIL OFL 1.1, `LICENSE-label-fixture.txt`), built by `make_fixture.py`.
 
 `build.rs` refuses an archive whose size or SHA-256 differs from its pin.
 The `clippy` action checks the **host** target; Skyline checks and the C++
