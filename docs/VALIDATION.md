@@ -2,6 +2,45 @@
 
 ## Release line
 
+**1.2.0** (2026-11-13, not released) keeps 1.1.0's archive (`c1e4471b…`) and
+changes only the Rust shell: the paged codepoint index when every client
+declared a paged reader, the archive's counters exported, and no lock in the
+hook path (`7d0eff5`).
+
+- **NRO:** 913,408 bytes, SHA-256
+  `9c411083735a3ccf96b90048c838f7a7e1c1570714101274f3599f2e7a465147`,
+  950,272 bytes resident (`tools/build/nro_size.py`), no diagnostic strings.
+  `eedbf00`'s build (`fbd07016…`, 954,368 resident) kept the three mutexes.
+- **Checks at `7d0eff5`, each one command:** `cargo test` (12 unit tests and
+  `tests/hook_locks.rs`' 2), `cargo clippy --all-targets -- -D warnings`,
+  `cargo build --no-default-features`, `cargo skyline clippy -- -- -D
+  warnings` with and without `frame-guard-stats,draw-stats`, the release and
+  diagnostic Skyline builds, `host-tests/run.py` (9 of 9),
+  `tools/test_deluxe_parity.py` (3). With a C++ file holding a
+  `std::lock_guard<std::mutex>` added under `imgui-smash/src/`, the
+  `hook_locks` test binary failed (exit 101) naming it; without it, it passed.
+- **Eden, runs `imp-oppa9`/`imp-oppb9` (`fbd07016`) and `imp-oppa10`/
+  `imp-oppb10` (`9c411083`), 2026-11-13.** One LAN Quickplay match per pair:
+  instance a on the XPS, Online Deluxe `2085fd04` (`6c05693`, which declares
+  itself) with this NRO; instance b on the Yoga, the same Deluxe with its
+  built-in ImGui. Rows in Deluxe's `eden/imgui-parity/`; 10 of 10 rows passed
+  on each instance in both pairs.
+  - a used this host and paged its index: Deluxe's `install.log` says
+    `overlay_host_external_paged_reader recorded` and
+    `overlay_host_external_ready`; `renderer-status.txt` says
+    `imgui_stats=external` and
+    `imgui_host_clients=1 declared=1 declarations=1 plugins=4 index=paged`.
+  - Every `imgui_font_*` and `imgui_draw_max_*` line equal on a and b:
+    `imgui_font_index=paged pages=2`, 17,840 bytes, atlas 512x256, one
+    texture of 262,144 bytes.
+  - Both opponent labels read `Æsir テスト`, every traced draw of Æ, テ, ス and ト
+    the character's own glyph.
+  - L3 + R3: this NRO's `InputHelper::updatePadState` ran on a, Deluxe's on
+    b, 5 entries each; `ImguiNvnBackend::updateGamepad` ran on neither.
+  - `desync_seen=0` at the same `sync_end` frames on both; no unmapped access
+    or console error.
+- **Not run on a console.**
+
 **1.1.0** (2026-11-13) makes the standalone current with the ImGui Online
 Deluxe links. Its archive is built from the same source Deluxe 0.10.4 links
 (`9405a49`), plus 1.0.2's texture-table guard (`97ca947`) and navigation
