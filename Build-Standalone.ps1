@@ -22,6 +22,19 @@ $env:CARGO_BUILD_JOBS = "2"
 $env:IMGUI_SMASH_ARTIFACT_DIR = $ArtifactDir
 Set-Location -LiteralPath $root
 
+# Free disk before a build (ssbu-mod-playbook WORKFLOW, "Build caches and disk"): stop below 40 GB.
+function Get-FreeBytes([string]$Path) {
+    if ($IsWindows) {
+        return [IO.DriveInfo]::new([IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $Path).Path)).AvailableFreeSpace
+    }
+    return [int64]((& df -B1 --output=avail $Path | Select-Object -Last 1).Trim())
+}
+$freeBytes = Get-FreeBytes $root
+if ($freeBytes -lt 40GB) {
+    throw "Only $([math]::Round($freeBytes / 1GB, 1)) GiB free under $root; the build needs at least 40 GiB. Delete finished build products first."
+}
+Write-Output "free_disk_gib=$([math]::Round($freeBytes / 1GB, 1))"
+
 Write-Output "action=$Action"
 Write-Output "artifactdir=$ArtifactDir"
 Write-Output "targetdir=$env:CARGO_TARGET_DIR"
