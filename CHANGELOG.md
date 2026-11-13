@@ -16,6 +16,13 @@ The same archive as 1.1.0 (`c1e4471b…`); only the Rust shell changes.
   `imgui_smash_font_dynamic_set_wrapper`, `imgui_smash_draw_stats_wrapper`,
   `imgui_smash_frame_guard_stats_wrapper`), so a client that draws through this
   host can report the overlay's fonts and renderer as the built-in host does.
+- **No lock in the hook path.** The context-setup callbacks, the declarations
+  and the choice are atomics (`clients::Slots`, `clients::Published`) instead
+  of mutexes: the callbacks run inside the NVN hook that creates the context,
+  and 1.1.0 held a mutex there (also while the callbacks ran) that a plugin
+  registering a callback could hold. Up to 64 callbacks are kept, in order;
+  the list no longer allocates. `tests/hook_locks.rs` fails on any lock
+  primitive in the Rust shell or the archive's C++.
 - Every 1.1.0 export is unchanged.
 
 ## 1.1.0 (2026-11-13)

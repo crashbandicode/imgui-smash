@@ -12,6 +12,128 @@
 //! of them (as a dynamic import or a `LookupSymbol` string) to reach the
 //! context at all. Skyline loads every plugin before the context exists, so
 //! the set is complete when the choice is made.
+//!
+//! The choice runs inside the NVN hook that creates the context, and plugin
+//! threads call the exports, so the state they share ([`Slots`],
+//! [`Published`]) is read and written without a lock.
+
+use std::cell::UnsafeCell;
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering::SeqCst};
+
+/// Up to `N` non-zero words, added from any thread and read without a lock.
+/// A word goes into the first free slot and slots never empty again, so the
+/// filled slots are always a prefix, in the order the words were added.
+pub struct Slots<const N: usize> {
+    slots: [AtomicUsize; N],
+}
+
+impl<const N: usize> Slots<N> {
+    pub const fn new() -> Self {
+        Self { slots: [const { AtomicUsize::new(0) }; N] }
+    }
+
+    /// Adds `value`; false when it is zero or every slot is taken.
+    pub fn push(&self, value: usize) -> bool {
+        self.add(value, false)
+    }
+
+    /// Adds `value` unless a slot already holds it; false when it is zero or
+    /// every slot is taken by other words.
+    pub fn insert_once(&self, value: usize) -> bool {
+        self.add(value, true)
+    }
+
+    fn add(&self, value: usize, once: bool) -> bool {
+        if value == 0 {
+            return false;
+        }
+        for slot in &self.slots {
+            match slot.compare_exchange(0, value, SeqCst, SeqCst) {
+                Ok(_) => return true,
+                Err(current) if once && current == value => return true,
+                Err(_) => {}
+            }
+        }
+        false
+    }
+
+    /// Copies the filled slots into `out`; returns how many there are.
+    pub fn snapshot(&self, out: &mut [usize; N]) -> usize {
+        let mut count = 0;
+        for slot in &self.slots {
+            let value = slot.load(SeqCst);
+            if value == 0 {
+                break;
+            }
+            out[count] = value;
+            count += 1;
+        }
+        count
+    }
+}
+
+impl<const N: usize> Default for Slots<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const EMPTY: u8 = 0;
+const WRITING: u8 = 1;
+const READY: u8 = 2;
+
+/// A value written once and read without a lock: the first [`Published::begin`]
+/// gets the [`Writer`]; [`Published::get`] returns the value once it is
+/// published.
+pub struct Published<T: Copy> {
+    state: AtomicU8,
+    value: UnsafeCell<MaybeUninit<T>>,
+}
+
+// SAFETY: only the one `Writer` writes `value`, before `state` becomes READY;
+// readers read it only after they see READY.
+unsafe impl<T: Copy + Send> Sync for Published<T> {}
+
+impl<T: Copy> Published<T> {
+    pub const fn new() -> Self {
+        Self { state: AtomicU8::new(EMPTY), value: UnsafeCell::new(MaybeUninit::uninit()) }
+    }
+
+    /// The one write; `None` when it was claimed before.
+    pub fn begin(&self) -> Option<Writer<'_, T>> {
+        self.state.compare_exchange(EMPTY, WRITING, SeqCst, SeqCst).ok().map(|_| Writer { cell: self })
+    }
+
+    /// True once the write was claimed (the value may not be published yet).
+    pub fn begun(&self) -> bool {
+        self.state.load(SeqCst) != EMPTY
+    }
+
+    pub fn get(&self) -> Option<T> {
+        // SAFETY: READY is stored after the value was written.
+        (self.state.load(SeqCst) == READY).then(|| unsafe { (*self.value.get()).assume_init() })
+    }
+}
+
+impl<T: Copy> Default for Published<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The right to publish a [`Published`] value.
+pub struct Writer<'a, T: Copy> {
+    cell: &'a Published<T>,
+}
+
+impl<T: Copy> Writer<'_, T> {
+    pub fn publish(self, value: T) {
+        // SAFETY: this is the only Writer, and no reader reads before READY.
+        unsafe { (*self.cell.value.get()).write(value) };
+        self.cell.state.store(READY, SeqCst);
+    }
+}
 
 /// The exports through which a plugin gets the context or runs inside the
 /// host's frame. `imgui_smash_show_mouse_wrapper` and the stats getters give
@@ -164,6 +286,64 @@ mod tests {
         assert!(!names_context_export(b"imgui_smash_show_mouse_wrapper\0imgui_smash_font_stats_wrapper\0"));
         assert!(!names_context_export(b""));
         assert!(!names_context_export(b"imgui_smash"));
+    }
+
+    #[test]
+    fn slots_fill_in_order_and_insert_once_keeps_one_copy() {
+        let slots = Slots::<4>::new();
+        let mut out = [0usize; 4];
+        assert_eq!(slots.snapshot(&mut out), 0);
+        assert!(!slots.push(0), "zero marks a free slot");
+        assert!(slots.insert_once(DELUXE));
+        assert!(slots.insert_once(DELUXE));
+        assert!(slots.push(OTHER));
+        assert!(slots.push(OTHER), "push keeps repeats (a callback registered twice runs twice)");
+        assert_eq!(slots.snapshot(&mut out), 3);
+        assert_eq!(&out[..3], &[DELUXE, OTHER, OTHER]);
+        assert!(slots.push(OLD_DELUXE));
+        assert_eq!(slots.snapshot(&mut out), 4);
+        assert_eq!(out, [DELUXE, OTHER, OTHER, OLD_DELUXE]);
+        assert!(!slots.push(OTHER), "full");
+        assert!(slots.insert_once(DELUXE), "already held");
+        assert!(!slots.insert_once(0x3000_0000), "full");
+    }
+
+    #[test]
+    fn concurrent_inserts_record_each_module_once() {
+        let slots = std::sync::Arc::new(Slots::<16>::new());
+        let threads: Vec<_> = (0..8)
+            .map(|thread| {
+                let slots = slots.clone();
+                std::thread::spawn(move || {
+                    for round in 0..200 {
+                        slots.insert_once(0x1000 * (1 + (thread + round) % 5));
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let mut out = [0usize; 16];
+        let count = slots.snapshot(&mut out);
+        let mut seen = out[..count].to_vec();
+        seen.sort_unstable();
+        assert_eq!(seen, [0x1000, 0x2000, 0x3000, 0x4000, 0x5000]);
+    }
+
+    #[test]
+    fn published_is_written_once_and_read_after_publish() {
+        let cell = Published::<HostClients>::new();
+        assert!(!cell.begun());
+        assert_eq!(cell.get(), None);
+        let writer = cell.begin().expect("the first claim");
+        assert!(cell.begun());
+        assert!(cell.begin().is_none(), "one writer");
+        assert_eq!(cell.get(), None, "claimed, not yet published");
+        let record = host_clients(&[DELUXE], &[DELUXE], 21);
+        writer.publish(record);
+        assert_eq!(cell.get(), Some(record));
+        assert!(cell.begin().is_none());
     }
 
     fn header(text_offset: u32, ro_offset: u32, ro_size: u32) -> [u8; 0x80] {

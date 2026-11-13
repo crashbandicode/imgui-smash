@@ -30,7 +30,6 @@ mod tests {
 mod plugin {
     use skyline::hook;
     use skyline::libc::{c_char, c_void};
-    use std::sync::Mutex;
 
     #[link(name = "imgui_smash", kind = "static")]
     unsafe extern "C" {
@@ -148,7 +147,9 @@ mod plugin {
 
     pub type SetupContextFn = unsafe extern "C" fn(*mut u64);
 
-    static POST_INIT_FUNCS: Mutex<Vec<SetupContextFn>> = Mutex::new(Vec::new());
+    /// Context-setup callbacks, in the order they were registered.
+    static POST_INIT_FUNCS: crate::clients::Slots<MAX_SETUP_CALLBACKS> = crate::clients::Slots::new();
+    const MAX_SETUP_CALLBACKS: usize = 64;
 
     /// Digest of the static archive this NRO was linked against.
     static LINKED_ARCHIVE_SHA256: &str = env!("IMGUI_SMASH_ARCHIVE_SHA256");
@@ -159,8 +160,11 @@ mod plugin {
     unsafe extern "C" fn imgui_post_context() {
         choose_index();
         let context = igGetCurrentContext();
-        let funcs = POST_INIT_FUNCS.lock().unwrap();
-        for callback in funcs.iter() {
+        let mut funcs = [0usize; MAX_SETUP_CALLBACKS];
+        let count = POST_INIT_FUNCS.snapshot(&mut funcs);
+        for &func in &funcs[..count] {
+            // SAFETY: only imgui_setup_context_export stores words here, each a SetupContextFn.
+            let callback = unsafe { std::mem::transmute::<usize, SetupContextFn>(func) };
             callback(context.cast());
         }
     }
@@ -193,7 +197,7 @@ mod plugin {
 
     #[no_mangle]
     pub unsafe extern "C" fn imgui_setup_context_export(func: SetupContextFn) {
-        POST_INIT_FUNCS.lock().unwrap().push(func);
+        POST_INIT_FUNCS.push(func as usize);
     }
 
     #[no_mangle]
@@ -205,22 +209,20 @@ mod plugin {
     /// with reads the paged codepoint index (the archive's
     /// `0001-paged-codepoint-index.patch`). `probe` is any function in the
     /// client's own text. Returns 1 when recorded before the index mode was
-    /// chosen, 2 when the choice was already made (the declaration then
-    /// changes nothing), 0 when `probe` is not in a loaded plugin's text.
+    /// chosen, 2 when the choice was made or is being made (the declaration
+    /// may then change nothing), 0 when `probe` is not in a loaded plugin's
+    /// text or 16 other modules have declared.
     #[no_mangle]
     pub unsafe extern "C" fn imgui_smash_declare_paged_index_reader_v1(probe: *const c_void) -> u32 {
         let Some((base, _)) = (unsafe { plugin_of(probe as usize) }) else {
             return 0;
         };
-        {
-            let mut declared = DECLARED.lock().unwrap();
-            let (bases, count) = &mut *declared;
-            if !bases[..*count].contains(&base) && *count < bases.len() {
-                bases[*count] = base;
-                *count += 1;
-            }
+        if !DECLARED.insert_once(base) {
+            return 0;
         }
-        if CHOICE.lock().unwrap().is_some() {
+        // Recorded before this reads "not begun", so choose_index's snapshot,
+        // taken after it begins, holds it (both sequentially consistent).
+        if CHOICE.begun() {
             2
         } else {
             1
@@ -234,7 +236,7 @@ mod plugin {
         if out.is_null() {
             return 0;
         }
-        match *CHOICE.lock().unwrap() {
+        match CHOICE.get() {
             Some(record) => {
                 unsafe { out.write(record) };
                 1
@@ -269,15 +271,19 @@ mod plugin {
     }
 
     /// Module bases of the declared paged readers (fixed storage: no heap).
-    static DECLARED: Mutex<([usize; MAX_DECLARED], usize)> = Mutex::new(([0; MAX_DECLARED], 0));
+    static DECLARED: crate::clients::Slots<MAX_DECLARED> = crate::clients::Slots::new();
     const MAX_DECLARED: usize = 16;
-    /// The index-mode choice, once made.
-    static CHOICE: Mutex<Option<crate::clients::HostClients>> = Mutex::new(None);
+    /// The index-mode choice, made once.
+    static CHOICE: crate::clients::Published<crate::clients::HostClients> = crate::clients::Published::new();
     const MAX_PLUGINS: usize = 64;
 
     /// The clients (plugins other than this one that name a context export),
-    /// checked against the declarations; the archive's fonts follow.
+    /// checked against the declarations; the archive's fonts follow. Runs in
+    /// the NVN hook that creates the context: nothing here waits on a lock.
     unsafe fn choose_index() {
+        let Some(writer) = CHOICE.begin() else {
+            return;
+        };
         let own = unsafe { plugin_of(choose_index as *const () as usize) }.map(|(base, _)| base);
         let mut clients = [0usize; MAX_PLUGINS];
         let mut count = 0;
@@ -297,7 +303,8 @@ mod plugin {
                 }
             });
         }
-        let (declared, declared_count) = *DECLARED.lock().unwrap();
+        let mut declared = [0usize; MAX_DECLARED];
+        let declared_count = DECLARED.snapshot(&mut declared);
         let mut record = crate::clients::host_clients(&clients[..count], &declared[..declared_count], seen);
         if overflow {
             // More clients than the table holds: one of them is unchecked.
@@ -307,7 +314,7 @@ mod plugin {
         unsafe {
             imgui_smash_font_use_paged_index(record.paged as i32);
         }
-        *CHOICE.lock().unwrap() = Some(record);
+        writer.publish(record);
     }
 
     unsafe fn names_export(base: usize, segments: crate::clients::NroSegments) -> bool {

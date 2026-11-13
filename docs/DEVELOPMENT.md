@@ -33,7 +33,8 @@ Since 1.2.0 it also exports:
   one of the context exports above (setup, get-context, draw, new-frame,
   pre-init); the fonts index glyphs in 256-codepoint pages only if each of them
   declared, and stay dense otherwise. Returns 1 when recorded in time, 2 after
-  the choice (no effect), 0 when the probe is not in a plugin's text.
+  the choice (no effect), 0 when the probe is not in a plugin's text or 16 other
+  plugins have declared.
 - `imgui_smash_host_clients_v1(out)`: the choice (`src/clients.rs`
   `HostClients`, 32 bytes).
 - `imgui_smash_font_stats_wrapper`, `imgui_smash_font_dynamic_set_wrapper`,
@@ -42,7 +43,8 @@ Since 1.2.0 it also exports:
   `include/imgui_smash_draw_stats.h`, `frame_guard.hpp`).
 
 Register context setup during plugin initialization; set the consumer's current
-context to the pointer supplied by the host. Draw from the host's frame callback,
+context to the pointer supplied by the host. The host keeps up to 64 setup
+callbacks and runs them in the order they were registered. Draw from the host's frame callback,
 balance Begin/End and Push/Pop, and do not start another renderer for a borrowed
 context. `ig*` calls are not a dynamically exported API promised by this host:
 consumers may link matching cimgui/ImGui code from the static archive.
@@ -111,7 +113,9 @@ cargo skyline build --release --no-default-features
 ```
 
 The Rust host configuration excludes the renderer; its successful build is not
-a renderer test. The C++ host tests build with the host g++ (C++23, warnings
+a renderer test. `tests/hook_locks.rs` fails if the Rust shell or the archive's
+C++ uses a lock primitive: the hooks run on game threads while plugin threads
+call the exports, so the shared state is atomics only. The C++ host tests build with the host g++ (C++23, warnings
 are errors for this repository's code) and write executables outside the
 repository. `run.py` builds and runs all nine: `command_memory_reserve`,
 `draw_slot_rules`, `frame_guard`, `frame_guard_concurrent`, `texture_rules`,
