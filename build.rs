@@ -10,11 +10,14 @@ const PREBUILT_NOT_USED: &str = "0042ff0592313228b0746ee9214091249f7c70a1797e182
 /// Static archive built from this repository's imgui-smash/ by
 /// `Build-Standalone.ps1 -Action archive` (renderer correction; demo, debug
 /// tools and default fonts off; 64 KiB + 16 KiB draw-slot budgets; the
-/// three-slot swapchain texture table, overlay_texture_policy.hpp; 1.0.2: the
-/// L3 + R3 navigation toggle off unless config.ini enables it). Any other
+/// three-slot swapchain texture table, overlay_texture_policy.hpp; the L3 + R3
+/// navigation toggle off unless config.ini enables it; 1.1.0: the shared
+/// fonts, the static and dynamic glyph sets and the opt-in paged codepoint
+/// index). Its source is the one Online Deluxe 0.10.4 links (9405a49) plus
+/// 1.0.2's two fixes; `tools/deluxe_parity.py` compares the pins. Any other
 /// file is refused.
-const PINNED_SHA256: &str = "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
-const PINNED_SIZE: u64 = 13_884_166;
+const PINNED_SHA256: &str = "c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88";
+const PINNED_SIZE: u64 = 14_820_452;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=IMGUI_SMASH_ARTIFACT_DIR");

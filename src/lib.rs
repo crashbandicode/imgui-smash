@@ -2,8 +2,8 @@
 //! bb47b205ed0be2fb864269ee2d37fc886b81221e is adapted only enough to drop
 //! imgui-api, prefix this NRO's bootstrap hook, and link a caller-supplied
 //! static archive. Since 1.0.2 it also reads `config.ini` for the L3 + R3
-//! gamepad-navigation toggle (`config`). Host builds do not create an ImGui
-//! context.
+//! gamepad-navigation toggle (`config`). Since 1.1.0 the archive is the one
+//! Online Deluxe links. Host builds do not create an ImGui context.
 
 pub mod config;
 
@@ -13,9 +13,10 @@ pub const HOST_CREATES_IMGUI_CONTEXT: bool = false;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn version_is_the_patch() {
-        // 1.0.2: the L3 + R3 toggle behind config.ini; a patch on 1.0.1.
-        assert_eq!(env!("CARGO_PKG_VERSION"), "1.0.2");
+    fn version_is_the_release() {
+        // 1.1.0: the archive Online Deluxe links (shared fonts, paged index) plus
+        // 1.0.2's texture-table guard and L3 + R3 toggle behind config.ini.
+        assert_eq!(env!("CARGO_PKG_VERSION"), "1.1.0");
     }
 }
 
@@ -85,7 +86,7 @@ mod plugin {
     const _: () = {
         assert!(std::mem::size_of::<DrawStats>() == DRAW_STATS_LAYOUT_BYTES as usize);
         assert!(same_archive(
-            "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380",
+            "c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88",
             env!("IMGUI_SMASH_ARCHIVE_SHA256"),
         ));
     };
@@ -102,7 +103,7 @@ mod plugin {
     const FRAME_GUARD_STATUS_FILE: &str = "frame-guard-status.txt";
     #[cfg(feature = "frame-guard-stats")]
     const PINNED_ARCHIVE_SHA256: &str =
-        "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
+        "c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88";
 
     #[cfg(feature = "frame-guard-stats")]
     #[repr(C)]
@@ -358,7 +359,7 @@ mod plugin {
         use std::io::{Cursor, Write};
         let mut buf = [0u8; 512];
         let mut cursor = Cursor::new(&mut buf[..]);
-        let digest = "7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380";
+        let digest = "c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88";
         let _ = if stats.version == 1 && stats.size == DRAW_STATS_LAYOUT_BYTES {
             write!(
                 cursor,

@@ -21,3 +21,5 @@ target
 #.idea/
 
 lib
+__pycache__/
+

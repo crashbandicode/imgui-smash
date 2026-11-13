@@ -2,7 +2,42 @@
 
 ## Release line
 
-**1.0.2** (`main`, not yet tagged or released) carries the Switch build's
+**1.1.0** (2026-11-13) makes the standalone current with the ImGui Online
+Deluxe links. Its archive is built from the same source Deluxe 0.10.4 links
+(`9405a49`), plus 1.0.2's texture-table guard (`97ca947`) and navigation
+toggle (`c27ab7e`): applying `git diff 82f4bf7 c27ab7e -- imgui-smash/` (those
+two commits) to `9405a49` gives `main`'s `imgui-smash/` tree, except the
+upstream `imgui-smash/README.md`, which the build doesn't read. The submodule
+is `2b415e64` in both.
+
+- **Archive:** 14,820,452 bytes, SHA-256
+  `c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88`.
+  `Build-Standalone.ps1 -Action archive` (the pinned devkitA64 image, run by
+  rootless Podman with `--userns=keep-id`) built it twice from `f9844e9`, each
+  time from an empty `lib/`, byte for byte. Online Deluxe's
+  `tools/prepare_imgui.py` commands (a clone of `f9844e9` from Forgejo, its
+  own work copy and container arguments, Podman in place of Docker) built the
+  same bytes.
+- **NRO:** 913,408 bytes, SHA-256
+  `4d8ea5669802a35657df2375e05eda5db6c652a78ba627336b37091e8ed973ce`
+  (`cargo skyline build --release --no-default-features`; the build reads no
+  `SOURCE_DATE_EPOCH`).
+- **Checks, each one command:** `cargo test` (6), `cargo clippy --all-targets
+  -- -D warnings`, `cargo build --no-default-features`, `cargo skyline clippy
+  -- -- -D warnings` with and without `frame-guard-stats,draw-stats`, the
+  diagnostic Skyline build, the release build, `host-tests/run.py` (9 of 9)
+  and `tools/test_deluxe_parity.py` (3).
+- **What Deluxe looks up.** In the NRO's own symbol table,
+  `imgui_setup_context_export`, `imgui_smash_add_on_draw_frame_wrapper` and
+  `imgui_get_context_export` are defined in the text segment, which starts at
+  the NRO header (`text_offset` 0), and the ro segment holds
+  `1.92.7 WIP (19263)`: Deluxe's `select_imgui_host` takes it as an external
+  host. The exported names are the same set as v1.0.1's (`946de84f…`) and the
+  1.0.2 build's (`f72a6b8d…`). It imports `nn::pl::RequestSharedFontLoad`,
+  `GetSharedFontLoadState`, `GetSharedFontAddress` and `GetSharedFontSize`;
+  those two import none.
+
+**1.0.2** (never tagged or released; its changes are in 1.1.0) carries the Switch build's
 texture-table guard (below) and puts the L3 + R3 gamepad-navigation toggle
 behind `gamepad_nav_toggle` in `sd:/ultimate/imgui_smash/config.ini`, off by
 default. Archive 13,884,166 bytes, SHA-256
@@ -13,20 +48,14 @@ checks are the Rust `config` tests and `host-tests/nav_toggle_test.cpp`. A
 the Switch's build (below) on the operator's card on 2026-11-12 (card-install
 receipt `card-install-rc9/4-imgui`). It reads `imgui_smash/config.ini` and
 imports none of the shared-font functions, so its font is ASCII only. No
-runtime record with it exists yet.
+runtime record with it exists.
 
-**On `main` after 1.0.2** (merged 2026-11-13, not released): the font work
-from the former `unicode-shared-font` and `sparse-codepoint-index` branches
-(`966835c`, `bec80ec`, `9405a49`). Online Deluxe 0.10.4 links an archive
-built from `9405a49` (14,788,410 bytes, SHA-256 `26ea2c3b…`); its records,
-Eden runs of the fonts included, are in Deluxe's
+The font work (`966835c`, `bec80ec`, `9405a49`, from the former
+`unicode-shared-font` and `sparse-codepoint-index` branches) was merged into
+`main` on 2026-11-13. Online Deluxe 0.10.4 links an archive built from
+`9405a49` (14,788,410 bytes, SHA-256 `26ea2c3b…`); its records, Eden runs of
+the fonts included, are in Deluxe's
 [ImGui dependency record](https://git.syntaxbyexample.com/intpa/ssbu-online-deluxe-rewrite/src/branch/main/docs/IMGUI_DEPENDENCY.md).
-The standalone crate on `main` still pins 1.0.2's archive `7be7d40f…`, built
-before the merge, so a standalone built from `main` doesn't have the font work
-yet. On 2026-11-13 `python3 -I imgui-smash/host-tests/run.py` passed all seven
-tests it runs on `main` (`038f6a5`), and `nav_toggle_test` and
-`overlay_texture_policy_test` passed with the commands in
-[DEVELOPMENT.md](DEVELOPMENT.md#checks).
 
 **v1.0.1** merges the previously published `deluxe` renderer into `main` and
 refreshes its documentation. The Rust crate already used version 1.0.1 on that
@@ -45,7 +74,10 @@ Source lineage:
 | Demo/debug/default-font trims | `b923d90`, `ef98524`, `5ec9928` |
 | Draw-slot budgets | `c185303` — 64 KiB command + 16 KiB control per slot |
 | Archive pin | `77cdab7` — `09b296a0…` |
-| Swapchain texture-table guard | the Switch's build of 2026-10-22 — `1237aa46…` |
+| Swapchain texture-table guard | the Switch's build of 2026-10-22 — `1237aa46…`; on `main` as `97ca947` |
+| L3 + R3 toggle behind `config.ini` | `c27ab7e` (1.0.2) — `7be7d40f…` |
+| Text beyond ASCII | `966835c`, `bec80ec`, `9405a49` (Deluxe 0.10.4's archive `26ea2c3b…`) |
+| Archive pin (1.1.0) | `9405a49` + `97ca947` + `c27ab7e` — `c1e4471b…` |
 
 The v1.0.1 static archive is 13,851,844 bytes, SHA-256
 `09b296a0f5c67641d229bb4a6d8b170f75281368da3957d666af424476bc2731`.

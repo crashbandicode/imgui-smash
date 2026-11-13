@@ -66,12 +66,19 @@ The archive action uses devkitA64 image
 two CPUs, 2 GiB, no container network, and deterministic `ar`/`ranlib` flags.
 It writes `lib/cmake-build/libimgui_smash.a`; Rust writes
 `target/aarch64-skyline-switch/release/libimgui_smash.nro` and the unstripped `.so`.
+Where Docker is not available, rootless Podman with `--userns=keep-id` runs the
+same image; 1.1.0's archive was built that way, through a `docker` wrapper on
+`PATH` that adds the flag.
 
-The pinned archive is **13,884,166 bytes**, SHA-256
-`7be7d40f4690ffa07c5e4b7cfc5d2a622e5b045766e9802f2f811db284fe0380`.
+The pinned archive (1.1.0) is **14,820,452 bytes**, SHA-256
+`c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88`. It is
+built from the same source Online Deluxe 0.10.4 links (`9405a49`), plus
+1.0.2's texture-table guard (`97ca947`) and navigation toggle (`c27ab7e`).
 `build.rs` checks both before linking and never downloads it. Host-only builds
 do not require the archive. The script's Cargo operations are offline; populate
 the pinned dependencies and Docker image before using it offline.
+`python3 -I tools/deluxe_parity.py <Online Deluxe checkout>` compares this pin
+with Deluxe's `patches/imgui-smash/archive-pin.json` and `build.rs`.
 
 ## Checks
 
@@ -89,30 +96,14 @@ cargo skyline build --release --no-default-features
 The Rust host configuration excludes the renderer; its successful build is not
 a renderer test. The C++ host tests build with the host g++ (C++23, warnings
 are errors for this repository's code) and write executables outside the
-repository. `run.py` builds and runs seven of them: `command_memory_reserve`,
+repository. `run.py` builds and runs all nine: `command_memory_reserve`,
 `draw_slot_rules`, `frame_guard`, `frame_guard_concurrent`, `texture_rules`,
-`font_setup` and `paged_index` (the last two also build Dear ImGui, patched
-and unpatched):
+`font_setup`, `paged_index` (these two also build Dear ImGui, patched and
+unpatched), `nav_toggle` and `overlay_texture_policy`:
 
 ```powershell
 python3 -I imgui-smash/host-tests/run.py
-```
-
-`nav_toggle` and `overlay_texture_policy` came to `main` from the 1.0.2 line
-and aren't in `run.py` yet. Build and run them from `imgui-smash/`, for example
-in PowerShell on Linux:
-
-```powershell
-$out = Join-Path ([IO.Path]::GetTempPath()) "imgui-host-tests"
-New-Item -ItemType Directory -Force $out | Out-Null
-foreach ($name in @("nav_toggle", "overlay_texture_policy")) {
-    $sources = @("host-tests/${name}_test.cpp")
-    if ($name.StartsWith("frame_guard")) { $sources += "src/imgui_backend/frame_guard.cpp" }
-    & g++ -std=c++23 -Wall -Wextra -Werror -pthread -I src -I src/imgui_backend -I include @sources -o "$out/$name"
-    if ($LASTEXITCODE -ne 0) { throw "Compile failed: $name" }
-    & "$out/$name"
-    if ($LASTEXITCODE -ne 0) { throw "Test failed: $name" }
-}
+python3 -I tools/test_deluxe_parity.py
 ```
 
 The full inherited native backend build has existing warnings; this is distinct
@@ -123,14 +114,14 @@ from the warnings-denied focused tests and Rust Clippy gates.
 - `frame-guard-stats` and `draw-stats` add diagnostic writers; neither is enabled
   in the release NRO. Build diagnostic artifacts separately.
 - Demo/debug tooling and bundled Proggy fonts are compiled out. The backend
-  supplies JetBrains Mono NL's ASCII subset and, on `main` since 2026-11-13,
+  supplies JetBrains Mono NL's ASCII subset and, since 1.1.0,
   merges the console's shared fonts after it (`font_setup.cpp`,
   `shared_fonts.cpp`); calling `AddFontDefault` is not supported by this
   configuration. An ImGui assertion can abort the game.
 - The backend's InputHelper reads FullKey, Handheld and JoyDual pads, not
   GameCube controllers. Consumers such as Deluxe can poll their own input.
 - Gamepad navigation (L3 + R3) is off unless `sd:/ultimate/imgui_smash/config.ini`
-  sets `gamepad_nav_toggle = on` (1.0.2). The standalone reads the file in its
+  sets `gamepad_nav_toggle = on` (since 1.0.2, first released in 1.1.0). The standalone reads the file in its
   `main` and calls `imgui_smash_set_gamepad_nav_toggle` before
   `imgui_smash_init`; another host linking the archive gets the same default
   and can call it too.

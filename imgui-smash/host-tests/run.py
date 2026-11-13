@@ -31,6 +31,8 @@ TESTS = {
     "texture_rules_test": {"include": ["src"]},
     "font_setup_test": {"sources": ["src/imgui_backend/font_setup.cpp"], "imgui": True, "args": FIXTURES},
     "paged_index_test": {"imgui": True, "compare": True},
+    "nav_toggle_test": {"include": ["src"]},
+    "overlay_texture_policy_test": {"include": ["src/imgui_backend"]},
 }
 
 # paged_index_test lines: "bench " never compared; "mode " never compared; "bytes " compared only between the

@@ -15,19 +15,22 @@ links statically. The former `deluxe`, `unicode-shared-font` and
 `sparse-codepoint-index` branches are now included in `main`.
 Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 
-**[Download v1.0.1](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.0.1)**
-— standalone NRO, static archive and SHA-256 manifest. It is the newest
-release; 1.0.2 and the text beyond ASCII below are on `main` only.
+**[Download v1.1.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.1.0)**
+— standalone NRO, static archive and SHA-256 manifest. 1.1.0 is built from
+the same source Online Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's
+texture-table guard and navigation toggle, so its font is the one Deluxe
+draws with: names beyond ASCII show as text, not `?`. The standalone stays
+optional; Deluxe doesn't need it.
 
-For **Smash Ultimate 13.0.5**. From 2026-10-22 the standalone on the
-operator's Switch was v1.0.1 plus the texture-table guard below
-([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
+For **Smash Ultimate 13.0.5**. 1.1.0 is not on the operator's card, and its
+runtime record is an Eden run, not a console run. From 2026-10-22 the
+standalone on the operator's Switch was v1.0.1 plus the texture-table guard
+below ([the Switch's build](docs/VALIDATION.md#the-switchs-build-2026-10-22)). It was
 on the card when Online Deluxe 0.10.4 ran there on 2026-11-10, with
 [Switch firmware 23.0.1](https://en-americas-support.nintendo.com/app/answers/detail/a_id/22525/~/nintendo-switch-system-updates-and-change-history)
 and [Atmosphère 1.12.1](https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.1).
-Since 2026-11-12 the card has a 1.0.2 build instead; no console run with it
-is recorded. The renderer's other runtime records are Eden runs. See
-[the evidence](docs/VALIDATION.md).
+A 1.0.2 build replaced it on 2026-11-12; no console run with that build is
+recorded. See [the evidence](docs/VALIDATION.md).
 
 ## What this fork changes
 
@@ -47,15 +50,13 @@ is recorded. The renderer's other runtime records are Eden runs. See
    artifact identities are in the release manifest and [validation record](docs/VALIDATION.md).
 - **Bounded swapchain texture table.** At most three texture pointers are
   copied, and the overlay draws only after a successful acquire with an index
-  inside that table (the Switch build of 2026-10-22, on `main` since 1.0.2).
-- **Gamepad navigation off by default (1.0.2, not released yet).** L3 + R3
-  no longer toggles ImGui gamepad navigation unless `config.ini` enables it
-  (below).
+  inside that table (the Switch build of 2026-10-22; released in 1.1.0).
+- **Gamepad navigation off by default (since 1.1.0).** L3 + R3 no longer
+  toggles ImGui gamepad navigation unless `config.ini` enables it (below).
 
-The font work below is on `main` (from the former `unicode-shared-font` and
-`sparse-codepoint-index` branches) and in the archive Online Deluxe 0.10.4
-links. It is not in a release, and the standalone crate on `main` still pins
-1.0.2's archive (`7be7d40f…`), built before it was merged.
+The font work below came from the former `unicode-shared-font` and
+`sparse-codepoint-index` branches. Online Deluxe 0.10.4 links it, and since
+1.1.0 the standalone has it too.
 
 - **Text beyond ASCII.**
   - **Fonts.** JetBrains Mono's ASCII subset stays the first font at 18 px.
@@ -111,10 +112,11 @@ Only needed when another plugin draws its own ImGui windows through this
 host. Online Deluxe doesn't need it: it carries the renderer inside its own
 NRO. While this host is loaded, Deluxe doesn't start its own: it draws in this
 host if the exports and the ImGui version match, and its window stays off if
-they don't. Drawing in this host means this host's font; v1.0.1's is ASCII
-only, so names outside ASCII show `?` in Deluxe's window.
+they don't. Drawing in this host means this host's font. From 1.1.0 that is
+the font Deluxe has built in; v1.0.1's and 1.0.2's were ASCII only, so names
+outside ASCII showed `?` in Deluxe's window.
 
-- Download **`libimgui_smash.nro`** from [v1.0.1](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.0.1).
+- Download **`libimgui_smash.nro`** from [v1.1.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.1.0).
 - Place it in `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
 - Replace an existing copy rather than installing a second host; fully restart Smash.
 
@@ -125,10 +127,10 @@ nothing visible happens in game; its demo window is intentionally disabled.
 
 Up to 1.0.1, holding one stick click and pressing the other toggled ImGui
 gamepad navigation: the D-pad, face buttons, L/R and ZL/ZR then also drove
-every window this host draws (Online Deluxe's included), while the game still
-received every press. In 1.0.2 (on `main`, not released yet) the chord does
-nothing unless
-`sd:/ultimate/imgui_smash/config.ini` contains:
+the windows this host draws that accept ImGui navigation, while the game
+still received every press. (Online Deluxe's windows opt out of ImGui
+navigation and read the pad themselves.) Since 1.1.0 the chord does nothing
+unless `sd:/ultimate/imgui_smash/config.ini` contains:
 
 ```ini
 gamepad_nav_toggle = on
@@ -161,6 +163,15 @@ Host tests (g++ with C++23; warnings are errors for this repository's code):
 
 ```text
 python3 -I imgui-smash/host-tests/run.py
+```
+
+Whether the standalone still links the archive Online Deluxe pins (same
+digest, size, image, Dear ImGui commit and patches, and the same archive
+sources as the commit Deluxe names):
+
+```text
+python3 -I tools/deluxe_parity.py <Online Deluxe checkout>
+python3 -I tools/test_deluxe_parity.py
 ```
 
 `host-tests/fixtures/label-fixture.ttf` is a TrueType subset of Noto Sans CJK
