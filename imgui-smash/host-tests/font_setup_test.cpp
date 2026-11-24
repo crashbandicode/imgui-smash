@@ -12,6 +12,7 @@
 #include "JetBrainsMonoNL-Regular.h"
 
 #include <algorithm>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -279,6 +280,194 @@ int texturePixelBytes() {
     bytes += tex->Pixels != nullptr ? tex->GetSizeInBytes() : 0;
   }
   return bytes;
+}
+
+unsigned read16(const unsigned char *p) { return (static_cast<unsigned>(p[0]) << 8) | p[1]; }
+unsigned read32(const unsigned char *p) { return (read16(p) << 16) | read16(p + 2); }
+
+size_t tableOffset(const std::vector<unsigned char> &font, const char *name) {
+  if (font.size() < 12) {
+    return 0;
+  }
+  const unsigned count = read16(font.data() + 4);
+  for (unsigned i = 0; i < count && 12 + (i + 1) * 16 <= font.size(); ++i) {
+    const auto *record = font.data() + 12 + i * 16;
+    if (std::memcmp(record, name, 4) == 0) {
+      const size_t offset = read32(record + 8);
+      const size_t length = read32(record + 12);
+      return offset <= font.size() && length <= font.size() - offset ? offset : 0;
+    }
+  }
+  return 0;
+}
+
+void write16(std::vector<unsigned char> &font, size_t offset, int value) {
+  font[offset] = static_cast<unsigned char>((value >> 8) & 0xff);
+  font[offset + 1] = static_cast<unsigned char>(value & 0xff);
+}
+
+std::vector<unsigned char> lineVariant(const std::vector<unsigned char> &fixture, int ascent, int descent,
+                                       bool cap = true) {
+  std::vector<unsigned char> font = fixture;
+  const size_t hhea = tableOffset(font, "hhea");
+  const size_t os2 = tableOffset(font, "OS/2");
+  if (hhea == 0 || os2 == 0 || hhea + 8 > font.size() || os2 + 90 > font.size()) {
+    expect(false, "fixture has hhea and OS/2 metrics");
+    return {};
+  }
+  write16(font, hhea + 4, ascent);
+  write16(font, hhea + 6, descent);
+  if (!cap) {
+    write16(font, os2, 1);
+  }
+  expect(ImguiFontSetup::validFont(font.data(), font.size()), "each line-box variant remains valid");
+  return font;
+}
+
+void test_the_shared_fonts_are_the_only_sources(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({shared(fixture)});
+  expect(overlay.font != nullptr, "shared-only setup creates a font");
+  if (overlay.font == nullptr) {
+    return;
+  }
+  const ImFontGlyph *ascii = bake(overlay.font)->FindGlyph('H');
+  const ImFontGlyph *accent = bake(overlay.font)->FindGlyph(0x00C6);
+  std::printf("shared only: sources=%d shared=%d H-source=%d Æ-source=%d\n", overlay.font->Sources.Size,
+              ImguiFontSetup::stats().sharedSources, ascii ? ascii->SourceIdx : -1, accent ? accent->SourceIdx : -1);
+  expect(overlay.font->Sources.Size == 1 && ImguiFontSetup::stats().sharedSources == 1,
+         "test_the_shared_fonts_are_the_only_sources: exactly one shared source");
+  expect(overlay.font->Sources[0]->FontData == fixture.data() && ascii && ascii->Codepoint == 'H' &&
+             ascii->SourceIdx == 0 && accent && accent->Codepoint == 0x00C6 && accent->SourceIdx == 0,
+         "test_the_shared_fonts_are_the_only_sources: ASCII and Æ come from the fixture");
+}
+
+void test_no_valid_shared_font_adds_no_font() {
+  std::vector<unsigned char> invalid(64, 0);
+  for (const std::vector<SharedFont> &fonts : {std::vector<SharedFont>{}, std::vector<SharedFont>{shared(invalid)}}) {
+    Overlay overlay(fonts);
+    const int count = ImGui::GetIO().Fonts->Fonts.Size;
+    std::printf("no valid shared font: inputs=%zu font=%s atlas-fonts=%d shared=%d\n", fonts.size(),
+                overlay.font ? "present" : "null", count, ImguiFontSetup::stats().sharedSources);
+    expect(overlay.font == nullptr && count == 0 && ImguiFontSetup::stats().sharedSources == 0,
+           "test_no_valid_shared_font_adds_no_font: no font is added");
+  }
+}
+
+void test_latin_and_accented_capitals_are_one_height(const std::vector<unsigned char> &fixture) {
+  auto font = lineVariant(fixture, 880, -120);
+  Overlay overlay({shared(font)});
+  if (overlay.font == nullptr) {
+    expect(false, "test_latin_and_accented_capitals_are_one_height: font exists");
+    return;
+  }
+  const ImFontGlyph *h = bake(overlay.font)->FindGlyph('H');
+  const ImFontGlyph *ae = bake(overlay.font)->FindGlyph(0x00C6);
+  std::printf("capital rows H=%.2f..%.2f Æ=%.2f..%.2f\n", h->Y0, h->Y1, ae->Y0, ae->Y1);
+  expect(std::fabs(h->Y0 - ae->Y0) <= 1.0f && std::fabs(h->Y1 - ae->Y1) <= 1.0f,
+         "test_latin_and_accented_capitals_are_one_height: tops and bottoms match");
+}
+
+void test_capitals_keep_their_share_of_the_line(const std::vector<unsigned char> &fixture) {
+  for (const auto &[ascent, descent] : {std::pair{1160, -288}, {880, -120}, {1500, -500}}) {
+    auto font = lineVariant(fixture, ascent, descent);
+    Overlay overlay({shared(font)});
+    if (overlay.font == nullptr) {
+      expect(false, "test_capitals_keep_their_share_of_the_line: font exists");
+      continue;
+    }
+    const ImFontGlyph *ae = bake(overlay.font)->FindGlyph(0x00C6);
+    const float height = ae->Y1 - ae->Y0;
+    const float want = 18.0f * 730.0f / 1320.0f;
+    std::printf("capital share line=%d height=%.3f target=%.3f\n", ascent - descent, height, want);
+    expect(std::fabs(height - want) <= 1.0f,
+           "test_capitals_keep_their_share_of_the_line: capital height matches");
+  }
+  for (const auto &[ascent, descent] : {std::pair{1160, -288}, {880, -120}, {1500, -500}}) {
+    auto font = lineVariant(fixture, ascent, descent, false);
+    Overlay overlay({shared(font)});
+    if (overlay.font == nullptr) {
+      expect(false, "test_capitals_keep_their_share_of_the_line: fallback font exists");
+      continue;
+    }
+    const float advance = bake(overlay.font)->FindGlyph(0x30C6)->AdvanceX;
+    const float want = 18.0f * 1000.0f / 1320.0f;
+    std::printf("em fallback line=%d advance=%.3f target=%.3f\n", ascent - descent, advance, want);
+    expect(std::fabs(advance - want) <= 0.5f,
+           "test_capitals_keep_their_share_of_the_line: full-width em matches");
+  }
+}
+
+void test_the_text_keeps_its_place_in_the_line(const std::vector<unsigned char> &fixture) {
+  for (const auto &[ascent, descent] : {std::pair{1160, -288}, {880, -120}, {1500, -500}}) {
+    auto font = lineVariant(fixture, ascent, descent);
+    Overlay overlay({shared(font)});
+    if (overlay.font == nullptr) {
+      expect(false, "test_the_text_keeps_its_place_in_the_line: font exists");
+      continue;
+    }
+    ImFontBaked *baked = bake(overlay.font);
+    const float share = static_cast<float>(ascent) / static_cast<float>(ascent - descent);
+    const float scale = (730.0f / 1320.0f) / (733.0f / static_cast<float>(ascent - descent));
+    const float target = 18.0f * (1.0f + scale * (2.0f * share - 1.0f)) / 2.0f;
+    const ImFontGlyph *h = baked->FindGlyph('H');
+    std::printf("baseline line=%d target=%.3f baked-ascent=%.3f offset=%.3f H-bottom=%.3f\n", ascent - descent,
+                target, baked->Ascent, overlay.font->Sources[0]->GlyphOffset.y, h->Y1);
+    expect(std::fabs(h->Y1 - target) <= 1.0f,
+           "test_the_text_keeps_its_place_in_the_line: baseline matches centred target");
+    for (const ImFontGlyph &glyph : baked->Glyphs) {
+      if (glyph.Visible && ImguiFontSetup::isStaticCodepoint(glyph.Codepoint) &&
+          (glyph.Y0 < 0.0f || glyph.Y1 > ImguiFontSetup::kFontSize)) {
+        std::printf("static glyph outside line: U+%04X %.2f..%.2f\n", glyph.Codepoint, glyph.Y0, glyph.Y1);
+        expect(false, "test_the_text_keeps_its_place_in_the_line: static glyph is inside the line");
+      }
+    }
+  }
+}
+
+void test_every_source_gets_the_first_sources_em(const std::vector<unsigned char> &fixture) {
+  auto first = lineVariant(fixture, 1160, -288);
+  auto second = lineVariant(fixture, 880, -120);
+  const ImWchar chars[] = {0x30C6, 0x65E5, 0xD55C};
+  ImFontGlyph alone[3] = {};
+  {
+    Overlay overlay({shared(first)});
+    if (overlay.font == nullptr) {
+      expect(false, "test_every_source_gets_the_first_sources_em: base font exists");
+      return;
+    }
+    for (int i = 0; i < 3; ++i) {
+      alone[i] = *bake(overlay.font)->FindGlyph(chars[i]);
+    }
+  }
+  Overlay overlay({shared(first), shared(second)});
+  if (overlay.font == nullptr) {
+    expect(false, "test_every_source_gets_the_first_sources_em: merged font exists");
+    return;
+  }
+  ImFontConfig *source = nullptr;
+  for (ImFontConfig *config : overlay.font->Sources) {
+    if (config->FontData == first.data()) {
+      source = config;
+      break;
+    }
+  }
+  expect(source != nullptr, "the first fixture is present");
+  if (source == nullptr) {
+    return;
+  }
+  const ImWchar excluded[] = {0x30C6, 0x30C6, 0x65E5, 0x65E5, 0xD55C, 0xD55C, 0};
+  source->GlyphExcludeRanges = static_cast<const ImWchar *>(ImMemdup(excluded, sizeof(excluded)));
+  for (int i = 0; i < 3; ++i) {
+    const ImFontGlyph *merged = bake(overlay.font)->FindGlyph(chars[i]);
+    const float width = merged->X1 - merged->X0, height = merged->Y1 - merged->Y0;
+    const float oldWidth = alone[i].X1 - alone[i].X0, oldHeight = alone[i].Y1 - alone[i].Y0;
+    std::printf("source em U+%04X alone=%.2fx%.2f adv=%.3f merged=%.2fx%.2f adv=%.3f source=%d\n", chars[i],
+                oldWidth, oldHeight, alone[i].AdvanceX, width, height, merged->AdvanceX, merged->SourceIdx);
+    expect(merged->Codepoint == chars[i] && merged->SourceIdx == overlay.font->Sources.Size - 1 &&
+               std::fabs(width - oldWidth) <= 1.0f && std::fabs(height - oldHeight) <= 1.0f &&
+               std::fabs(merged->AdvanceX - alone[i].AdvanceX) <= 0.5f,
+           "test_every_source_gets_the_first_sources_em: merged glyph matches first-source glyph");
+  }
 }
 
 void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<unsigned char> &fixture,
@@ -809,6 +998,12 @@ int main(int argc, char **argv) {
     g_paged = paged;
     ImguiFontSetup::usePagedIndex(paged);
     std::printf("== %s per-codepoint index\n", paged ? "paged" : "dense");
+    test_the_shared_fonts_are_the_only_sources(fixture);
+    test_no_valid_shared_font_adds_no_font();
+    test_latin_and_accented_capitals_are_one_height(fixture);
+    test_capitals_keep_their_share_of_the_line(fixture);
+    test_the_text_keeps_its_place_in_the_line(fixture);
+    test_every_source_gets_the_first_sources_em(fixture);
     test_validation_accepts_fonts_and_rejects_anything_else(fixture, jetbrains);
     test_main_font_alone_draws_question_marks_for_the_name();
     test_static_set_is_built_once_and_kept(fixture);
