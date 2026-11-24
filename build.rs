@@ -13,11 +13,12 @@ const PREBUILT_NOT_USED: &str = "0042ff0592313228b0746ee9214091249f7c70a1797e182
 /// three-slot swapchain texture table, overlay_texture_policy.hpp; the L3 + R3
 /// navigation toggle off unless config.ini enables it; 1.1.0: the shared
 /// fonts, the static and dynamic glyph sets and the opt-in paged codepoint
-/// index). Its source is the one Online Deluxe 0.10.4 links (9405a49) plus
-/// 1.0.2's two fixes; `tools/deluxe_parity.py` compares the pins. Any other
-/// file is refused.
-const PINNED_SHA256: &str = "c1e4471b354565ab97b2c8d5b5698a70f774a991c540fce7fc12511fb42c0d88";
-const PINNED_SIZE: u64 = 14_820_452;
+/// index; 1.3.0: the console's shared fonts as the only fonts, no embedded
+/// font, and a refused glyph drawn again after a rebuild). Its source is this
+/// repository's `imgui-smash/` at f6fe1fa; `tools/deluxe_parity.py` compares
+/// the pins. Any other file is refused.
+const PINNED_SHA256: &str = "5605e032189bc48be27feb7321aac5169a44edec131e621e23520c54a85616d7";
+const PINNED_SIZE: u64 = 14_838_316;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=IMGUI_SMASH_ARTIFACT_DIR");

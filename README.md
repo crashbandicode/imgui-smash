@@ -15,17 +15,18 @@ links statically. The former `deluxe`, `unicode-shared-font` and
 `sparse-codepoint-index` branches are now included in `main`.
 Dear ImGui **1.92.7 WIP (19263)** remains pinned.
 
-**[Download v1.2.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.2.0)**
-— standalone NRO, static archive and SHA-256 manifest. 1.2.0 is built from
-the same source Online Deluxe 0.10.4 links (`9405a49`), plus 1.0.2's
-texture-table guard and navigation toggle, so Deluxe drawing through it gets
-the fonts Deluxe has built in: names beyond ASCII show as text, not `?`. It
-pages the codepoint index when every client can read it, exports its counters
-and takes no lock in the hook path. The standalone stays optional; Deluxe
-doesn't need it. (1.1.0 was staged but never published; its changes are in
-1.2.0.)
+**[Download v1.3.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.3.0)**
+— standalone NRO, static archive and SHA-256 manifest. 1.3.0 draws all text
+with the console's own shared fonts: the embedded font is gone, so characters
+beyond ASCII are no longer bigger than the ASCII beside them. Text is
+proportional; capitals and line height are as before. Its archive is the one
+Online Deluxe 0.10.9 links. Like 1.2.0 it pages the codepoint index when
+every client can read it, exports its counters and takes no lock in the hook
+path. The standalone stays optional; Deluxe doesn't need it. (1.1.0 was
+staged but never published; its changes are in 1.2.0.)
 
-For **Smash Ultimate 13.0.5**. 1.2.0 is not on the operator's card. Its
+For **Smash Ultimate 13.0.5**. 1.3.0 has not run in a game yet, and neither
+it nor 1.2.0 is on the operator's card. 1.2.0's
 runtime record is from Eden (2026-11-13), not a console: Online Deluxe drew
 its window through it as it does through its built-in host (pairs imp-opp9
 and imp-opp10), with the opponent label `Æsir テスト` in each character's own
@@ -122,10 +123,11 @@ host. Online Deluxe doesn't need it: it carries the renderer inside its own
 NRO. While this host is loaded, Deluxe doesn't start its own: it draws in this
 host if the exports and the ImGui version match, and its window stays off if
 they don't. Drawing in this host means this host's font. From 1.1.0 that is
-the font Deluxe has built in; v1.0.1's and 1.0.2's were ASCII only, so names
-outside ASCII showed `?` in Deluxe's window.
+the font Deluxe has built in (from 1.3.0, the console's shared fonts alone);
+v1.0.1's and 1.0.2's were ASCII only, so names outside ASCII showed `?` in
+Deluxe's window.
 
-- Download **`libimgui_smash.nro`** from [v1.2.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.2.0).
+- Download **`libimgui_smash.nro`** from [v1.3.0](https://git.syntaxbyexample.com/intpa/imgui-smash/releases/tag/v1.3.0).
 - Place it in `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
 - Replace an existing copy rather than installing a second host; fully restart Smash.
 

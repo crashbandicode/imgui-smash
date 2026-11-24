@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.0 (2026-11-24, not released)
+
+A new archive (`5605e032…`, 14,838,316 bytes, from `imgui-smash/` at
+`f6fe1fa`). Not yet run in a game.
+
+- **The console's shared fonts are the only fonts.** The embedded JetBrains
+  Mono NL is gone, with its files and licence text. Before, ASCII came from
+  that font and every other character from the shared fonts, and the two were
+  sized by different line boxes: text from the shared fonts was drawn 1.32
+  times bigger than ASCII. With one font family there is nothing to mismatch.
+- **What a client sees.**
+  - Text is proportional, not monospace. The digits still share one advance.
+  - Font size still means line height. Capitals keep the share of the line
+    they had (55.3%), from each font's own cap height and line box, so they
+    are as tall as before; the baseline keeps its row at 18 px.
+  - Every further shared font is drawn at the first one's em.
+- **No font, no frame.** While no shared font is loaded and valid, the host
+  starts no ImGui frame and calls no client. It asks for the fonts once and
+  then checks about once every 60 host frames, without a lock or a wait of
+  its own. Whether the `nn::pl` calls themselves can wait is not established;
+  1.2.0 made the same calls once at initialization.
+- **A refused glyph draws after the next rebuild.** A glyph the fill guard
+  refused stayed marked "not found" across a rebuild when the fallback glyph
+  was U+FFFD, so it kept drawing the fallback. A rebuild now clears those
+  marks for dynamic characters. The console's standard font has no U+FFFD, so
+  this did not show there.
+- **Size.** The embedded font was 13,694 bytes of read-only data and a
+  17,896-byte copy on the heap at run time. The NRO's size is in the release
+  notes.
+
 ## 1.2.0 (2026-11-13, not released)
 
 The same archive as 1.1.0 (`c1e4471b…`); only the Rust shell changes.

@@ -2,6 +2,24 @@
 
 ## Release line
 
+**1.3.0** (2026-11-24, not released) has a new archive: the console's shared
+fonts are the only fonts, and a refused glyph draws again after a rebuild.
+
+- **Archive:** 14,838,316 bytes, SHA-256
+  `5605e032189bc48be27feb7321aac5169a44edec131e621e23520c54a85616d7`, built
+  twice from `f6fe1fa` on the Yoga with Online Deluxe's `prepare_imgui.py`
+  commands in the pinned devkitA64 image (Docker), byte for byte. It holds no
+  `JetBrains` string.
+- **Host tests at `f6fe1fa`:** `host-tests/run.py`, 9 of 9. New in
+  `font_setup_test`: the shared fonts are the only sources; no valid font
+  adds none; `H` and `Æ` are one height; capitals are 10 px at 18 px for line
+  boxes of 1.448, 1.00 and 2.00 em; the baseline is within 1 px of its
+  target; a second font is drawn at the first one's em; a refused glyph draws
+  after the rebuild with `?` and with U+FFFD as the fallback. The fixture is
+  an open font; no console font is in this repository.
+- **Not checked:** the look in a game, on a console or in Eden. Whether the
+  `nn::pl` calls can wait.
+
 **1.2.0** (2026-11-13, not released) keeps 1.1.0's archive (`c1e4471b…`) and
 changes only the Rust shell: the paged codepoint index when every client
 declared a paged reader, the archive's counters exported, and no lock in the
