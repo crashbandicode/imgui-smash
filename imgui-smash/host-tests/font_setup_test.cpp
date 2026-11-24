@@ -354,13 +354,13 @@ void test_no_valid_shared_font_adds_no_font() {
   }
 }
 
-void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned char> &fixture) {
+std::vector<unsigned char> symbolFixture(const std::vector<unsigned char> &fixture) {
   // Keep the fixture's outlines and metrics; give it a single private-use icon.
   auto symbols = fixture;
   const size_t cmap = tableOffset(symbols, "cmap");
   if (cmap == 0 || cmap + 44 > symbols.size()) {
     expect(false, "fixture has space for a two-segment Unicode cmap");
-    return;
+    return {};
   }
   const unsigned words[] = {0, 1, 3, 1, 0, 12, 4, 32, 0, 4, 4, 1, 0, 0xe000, 0xffff, 0,
                             0xe000, 0xffff, 0x2002, 1, 0, 0};
@@ -368,6 +368,11 @@ void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned
     write16(symbols, cmap + 2 * i, words[i]);
   }
   expect(ImguiFontSetup::validFont(symbols.data(), symbols.size()), "the supplementary face is structurally valid");
+  return symbols;
+}
+
+void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned char> &fixture) {
+  const auto symbols = symbolFixture(fixture);
   Overlay overlay({shared(symbols)});
   auto *atlas = ImGui::GetIO().Fonts;
   expect(!overlay.font && atlas->Fonts.Size == 0 && ImguiFontSetup::stats().sharedSources == 0,
@@ -380,6 +385,28 @@ void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned
   expect(ready && atlas->Fonts.Size == 1 && ready->IsGlyphInFont('H') && ready->IsGlyphInFont(0x30c6) &&
              ready->IsGlyphInFont(0xe000) && ImguiFontSetup::stats().sharedSources == 2,
          "same-context retry admits the text base and keeps its supplementary icon");
+}
+
+void test_late_shared_face_joins_the_live_font_once(const std::vector<unsigned char> &fixture) {
+  const auto symbols = symbolFixture(fixture);
+  Overlay overlay({shared(fixture)});
+  auto *atlas = ImGui::GetIO().Fonts;
+  expect(overlay.font && !overlay.font->IsGlyphInFont(0xe000), "base alone has no icon");
+  if (!overlay.font) {
+    return;
+  }
+  frame({"Hello"});
+  const SharedFont both[] = {shared(fixture), shared(symbols)};
+  auto *font = ImguiFontSetup::setup(atlas, both, 2, kTest);
+  expect(font == overlay.font && atlas->Fonts.Size == 1 && font->IsGlyphInFont(0xe000),
+         "a later shared face extends the same live font");
+  if (font != overlay.font) {
+    return;
+  }
+  frame({"Hello"});
+  auto *same = ImguiFontSetup::setup(atlas, both, 2, kTest);
+  expect(same == font && font->Sources.Size == 2 && ImguiFontSetup::stats().sharedSources == 2,
+         "an unchanged provider set adds nothing twice");
 }
 
 void test_latin_and_accented_capitals_are_one_height(const std::vector<unsigned char> &fixture) {
@@ -1030,6 +1057,7 @@ int main(int argc, char **argv) {
     test_the_shared_fonts_are_the_only_sources(fixture);
     test_no_valid_shared_font_adds_no_font();
     test_symbol_only_does_not_make_the_overlay_ready(fixture);
+    test_late_shared_face_joins_the_live_font_once(fixture);
     test_latin_and_accented_capitals_are_one_height(fixture);
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
