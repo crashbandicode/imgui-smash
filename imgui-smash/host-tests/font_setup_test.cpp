@@ -354,16 +354,16 @@ void test_no_valid_shared_font_adds_no_font() {
   }
 }
 
-std::vector<unsigned char> symbolFixture(const std::vector<unsigned char> &fixture) {
-  // Keep the fixture's outlines and metrics; give it a single private-use icon.
+std::vector<unsigned char> symbolFixture(const std::vector<unsigned char> &fixture, unsigned codepoint = 0xe000) {
+  // Keep the fixture's outlines and metrics; give it a single glyph, a private-use icon by default.
   auto symbols = fixture;
   const size_t cmap = tableOffset(symbols, "cmap");
   if (cmap == 0 || cmap + 44 > symbols.size()) {
     expect(false, "fixture has space for a two-segment Unicode cmap");
     return {};
   }
-  const unsigned words[] = {0, 1, 3, 1, 0, 12, 4, 32, 0, 4, 4, 1, 0, 0xe000, 0xffff, 0,
-                            0xe000, 0xffff, 0x2002, 1, 0, 0};
+  const unsigned words[] = {0, 1, 3, 1, 0, 12, 4, 32, 0, 4, 4, 1, 0, codepoint, 0xffff, 0,
+                            codepoint, 0xffff, (2u - codepoint) & 0xffffu, 1, 0, 0};
   for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); ++i) {
     write16(symbols, cmap + 2 * i, words[i]);
   }
@@ -412,6 +412,128 @@ void test_late_shared_face_joins_the_live_font_once(const std::vector<unsigned c
   auto *same = ImguiFontSetup::setup(atlas, both, 2, kTest);
   expect(same == font && font->Sources.Size == 2 && ImguiFontSetup::stats().sharedSources == 2,
          "an unchanged provider set adds nothing twice");
+}
+
+// The font is a function of which faces are loaded, not of the order they arrived in: its sources stay in query
+// order, with the first face that covers ordinary text as the base.
+void test_the_base_is_chosen_by_font_order_not_arrival(const std::vector<unsigned char> &fixture) {
+  g_destroyed.clear(); // Texture IDs start over with the new context.
+  const auto regional = lineVariant(fixture, 880, -120);
+  [&] {
+    Overlay overlay({shared(regional)});
+    auto *atlas = ImGui::GetIO().Fonts;
+    expect(overlay.font && overlay.font->Sources[0]->FontData == regional.data(), "a regional text face alone is the base");
+    if (!overlay.font) {
+      return;
+    }
+    frame({"H"});
+    // The standard face is first in query order and loads one poll later.
+    const SharedFont both[] = {shared(fixture), shared(regional)};
+    auto *font = ImguiFontSetup::setup(atlas, both, 2, kTest);
+    const bool standardBase = font && atlas->Fonts.Size == 1 && font->Sources.Size == 2 &&
+                              font->Sources[0]->FontData == fixture.data() && font->Sources[1]->FontData == regional.data();
+    expect(standardBase, "the face first in query order becomes the base when it loads later");
+    if (!standardBase) {
+      return;
+    }
+    const auto shown = frame({"H"});
+    const auto *h = bake(font)->FindGlyph('H');
+    expect(shown.texturesLive && shown.onCurrentAtlas && h && h->Codepoint == 'H' && h->SourceIdx == 0,
+           "Latin text is drawn from the base that is first in query order");
+    expect(ImGui::GetFont() == font && ImguiFontSetup::stats().sharedSources == 2, "the context draws with the one font");
+    auto *same = ImguiFontSetup::setup(atlas, both, 2, kTest);
+    expect(same == font && atlas->Fonts.Size == 1 && font->Sources.Size == 2, "an unchanged set changes nothing");
+  }();
+  // Merged faces keep query order too: the second face arrives after the third.
+  const auto second = symbolFixture(fixture, 0xe000), third = symbolFixture(fixture, 0xe001);
+  Overlay overlay({shared(fixture), shared(third)});
+  auto *atlas = ImGui::GetIO().Fonts;
+  if (!overlay.font) {
+    expect(false, "base with a later face exists");
+    return;
+  }
+  frame({"H"});
+  const SharedFont all[] = {shared(fixture), shared(second), shared(third)};
+  auto *font = ImguiFontSetup::setup(atlas, all, 3, kTest);
+  expect(font && atlas->Fonts.Size == 1 && font->Sources.Size == 3 && font->Sources[0]->FontData == fixture.data() &&
+             font->Sources[1]->FontData == second.data() && font->Sources[2]->FontData == third.data(),
+         "merged faces stay in query order when one arrives late");
+  if (font) {
+    const auto shown = frame({"H\xee\x80\x80\xee\x80\x81"});
+    expect(shown.texturesLive && shown.onCurrentAtlas && font->IsGlyphInFont(0xe000) && font->IsGlyphInFont(0xe001),
+           "both late faces draw from the current atlas");
+  }
+}
+
+// A face that loads late can supply a static-set character the base lacks, while no dynamic glyph is loaded.
+void test_a_late_face_adding_a_static_glyph_draws_without_a_rebuild(const std::vector<unsigned char> &fixture) {
+  g_destroyed.clear();
+  Overlay overlay({shared(fixture)});
+  auto *atlas = ImGui::GetIO().Fonts;
+  if (!overlay.font) {
+    expect(false, "base exists");
+    return;
+  }
+  unsigned missing = 0;
+  for (unsigned c = 0xa0; c <= 0x17f && missing == 0; ++c) {
+    if (!overlay.font->IsGlyphInFont(static_cast<ImWchar>(c))) {
+      missing = c;
+    }
+  }
+  expect(missing != 0, "the fixture lacks a static-set character");
+  if (missing == 0) {
+    return;
+  }
+  char utf8[3] = {static_cast<char>(0xc0 | (missing >> 6)), static_cast<char>(0x80 | (missing & 0x3f)), 0};
+  frame({std::string("H") + utf8});
+  const auto before = ImguiFontSetup::stats();
+  const auto *fallback = bake(overlay.font)->FindGlyph(static_cast<ImWchar>(missing));
+  expect(before.dynamicGlyphs == 0 && fallback && fallback->Codepoint != missing,
+         "before the late face: no dynamic glyph, and the character draws the fallback");
+  const auto late = symbolFixture(fixture, missing);
+  const SharedFont both[] = {shared(fixture), shared(late)};
+  auto *font = ImguiFontSetup::setup(atlas, both, 2, kTest);
+  expect(font == overlay.font && font->Sources.Size == 2, "the late face joins the live font");
+  FrameNote shown;
+  for (int i = 0; i < 40; ++i) {
+    shown = frame({std::string("H") + utf8});
+  }
+  const auto after = ImguiFontSetup::stats();
+  const auto *glyph = bake(font)->FindGlyph(static_cast<ImWchar>(missing));
+  std::printf("late static glyph U+%04X: static %d -> %d, dynamic %d, rebuilds %lld -> %lld, source %d\n", missing,
+              before.staticGlyphs, after.staticGlyphs, after.dynamicGlyphs, before.rebuilds, after.rebuilds,
+              glyph ? static_cast<int>(glyph->SourceIdx) : -1);
+  expect(glyph && glyph->Codepoint == missing && glyph->SourceIdx == 1 && shown.texturesLive && shown.onCurrentAtlas,
+         "the late static character draws its own glyph from the current atlas");
+  expect(after.staticGlyphs == before.staticGlyphs + 1 && after.dynamicGlyphs == 0 && after.rebuilds == before.rebuilds,
+         "it joins the static set: no dynamic glyph and no rebuild, over 40 frames");
+}
+
+// The same, with a dynamic glyph on screen: the glyph table is built again, so its tracking must start again too.
+void test_a_late_face_keeps_the_dynamic_tracking_aligned(const std::vector<unsigned char> &fixture) {
+  g_destroyed.clear();
+  Overlay overlay({shared(fixture)});
+  auto *atlas = ImGui::GetIO().Fonts;
+  if (!overlay.font) {
+    expect(false, "base exists");
+    return;
+  }
+  const std::string line = "H \xe3\x83\x86"; // one dynamic glyph, U+30C6
+  for (int i = 0; i < 3; ++i) {
+    frame({line});
+  }
+  expect(ImguiFontSetup::stats().dynamicGlyphs == 1, "one dynamic glyph is on screen");
+  const auto late = symbolFixture(fixture, 0x0104);
+  const SharedFont both[] = {shared(fixture), shared(late)};
+  auto *font = ImguiFontSetup::setup(atlas, both, 2, kTest);
+  expect(font == overlay.font && font->Sources.Size == 2, "the late face joins the live font");
+  for (int i = 0; i < 40; ++i) {
+    frame({line});
+  }
+  const auto after = ImguiFontSetup::stats();
+  std::printf("late face with a dynamic glyph on screen: dynamic %d, rebuilds %lld\n", after.dynamicGlyphs, after.rebuilds);
+  expect(after.dynamicGlyphs == 1 && after.rebuilds == 0,
+         "text that stays on screen causes no rebuild after a face joined");
 }
 
 void test_latin_and_accented_capitals_are_one_height(const std::vector<unsigned char> &fixture) {
@@ -1063,6 +1185,9 @@ int main(int argc, char **argv) {
     test_no_valid_shared_font_adds_no_font();
     test_symbol_only_does_not_make_the_overlay_ready(fixture);
     test_late_shared_face_joins_the_live_font_once(fixture);
+    test_the_base_is_chosen_by_font_order_not_arrival(fixture);
+    test_a_late_face_adding_a_static_glyph_draws_without_a_rebuild(fixture);
+    test_a_late_face_keeps_the_dynamic_tracking_aligned(fixture);
     test_latin_and_accented_capitals_are_one_height(fixture);
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
