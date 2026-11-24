@@ -908,6 +908,34 @@ void test_fill_guard_keeps_packing_inside_the_largest_atlas(const std::vector<un
   expect(allOwn(overlay.font, kLabel), "once that text is gone, the label draws its own glyphs");
 }
 
+void test_a_refused_glyph_draws_after_the_rebuild_with_either_fallback(const std::vector<unsigned char> &fixture) {
+  const auto without = FontFixture::withoutReplacement(fixture);
+  expect(!without.empty(), "fixture without replacement glyph was made");
+  for (bool replacement : {false, true}) {
+    const Limits limits = {0.2f, 256, 128, 512, 512, 6, 1, 30};
+    Overlay overlay({shared(replacement ? fixture : without)}, limits);
+    const std::string all = kanji(0, 160);
+    for (int f = 0; f < 3; ++f) {
+      frame({all});
+    }
+    frame({kLabel});
+    const ImFontGlyph *refused = bake(overlay.font)->FindGlyph(0x30C6);
+    const unsigned before = refused->Codepoint;
+    const long long refusals = ImguiFontSetup::stats().refusals;
+    for (int f = 0; f < 11; ++f) {
+      frame({kLabel});
+    }
+    const ImFontGlyph *after = bake(overlay.font)->FindGlyph(0x30C6);
+    const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
+    std::printf("rebuild recovery fallback=U+%04X before=U+%04X after=U+%04X refusals=%lld rebuilds=%lld\n",
+                overlay.font->FallbackChar, before, after->Codepoint, refusals, stats.rebuilds);
+    expect(refusals > 0 && before == overlay.font->FallbackChar,
+           "test_a_refused_glyph_draws_after_the_rebuild_with_either_fallback: glyph refused");
+    expect(stats.rebuilds > 0 && after->Codepoint == 0x30C6,
+           "test_a_refused_glyph_draws_after_the_rebuild_with_either_fallback: glyph recovered");
+  }
+}
+
 // 160 kanji in one frame into an atlas capped at 256x256, in a child process. Returns its wait status.
 int overfill(const std::vector<unsigned char> &fixture, float fillLimit) {
   std::fflush(stdout);
@@ -992,6 +1020,7 @@ int main(int argc, char **argv) {
     test_index_bytes_by_language(fixture);
     test_other_sizes_scale_the_one_bake(fixture);
     test_fill_guard_keeps_packing_inside_the_largest_atlas(fixture);
+    test_a_refused_glyph_draws_after_the_rebuild_with_either_fallback(fixture);
     test_without_the_fill_guard_imgui_aborts(fixture);
     test_default_limits_drop_a_name_within_about_a_second(fixture);
   }
