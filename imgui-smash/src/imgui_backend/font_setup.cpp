@@ -425,7 +425,7 @@ bool admitDynamic(long long livePackedSurface, float fontSize, const Limits &lim
   return livePackedSurface + side * side <= static_cast<long long>(static_cast<double>(capacity) * limits.fillLimit);
 }
 
-ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Limits &limits) {
+static void beginSetup(ImFontAtlas *atlas, const Limits &limits) {
   g_limits = limits;
   g_font = nullptr;
   g_boundary = 0;
@@ -461,18 +461,40 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   atlas->TexMinHeight = limits.texMinHeight;
   atlas->TexMaxWidth = limits.texMaxWidth;
   atlas->TexMaxHeight = limits.texMaxHeight;
+}
+
+ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Limits &limits) {
+  ImFont *font = atlas->Fonts.contains(g_font) ? g_font : nullptr;
+  const bool extending = font != nullptr;
+  const int capped = shared ? std::clamp(count, 0, kMaxSharedFonts) : 0;
+  const auto attached = [&](const SharedFont &s) {
+    return std::any_of(font->Sources.begin(), font->Sources.end(),
+                       [&](const ImFontConfig *src) { return src->FontData == s.data; });
+  };
+  if (!extending) {
+    beginSetup(atlas, limits);
+  } else if (!capped || std::all_of(shared, shared + capped, attached)) {
+    return font;
+  }
 
   // The shares of the line the overlay's capitals and em have always had.
   constexpr float kCapShare = 730.0f / 1320.0f;
   constexpr float kEmShare = 1000.0f / 1320.0f;
-  ImFont *font = nullptr;
   float firstEm = 0.0f, scale = 1.0f, offset = 0.0f;
-  const int capped = shared == nullptr ? 0 : (count < kMaxSharedFonts ? count : kMaxSharedFonts);
-  for (int i = 0; i < capped; ++i) {
+  if (extending) {
+    const auto *base = font->Sources[0];
+    FontMetrics metrics{};
+    if (!fontMetrics(base->FontData, base->FontDataSize, &metrics)) {
+      return font;
+    }
+    firstEm = metrics.emShare;
+    scale = base->ExtraSizeScale;
+    offset = base->GlyphOffset.y;
+  }
+  const auto add = [&](int i) -> ImFont * {
     FontMetrics metrics{};
     if (!fontMetrics(shared[i].data, shared[i].size, &metrics)) {
-      g_rejectedSources.fetch_add(1, std::memory_order_relaxed);
-      continue;
+      return nullptr;
     }
     if (font == nullptr) {
       firstEm = metrics.emShare;
@@ -485,6 +507,7 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
     config.FontDataSize = static_cast<int>(shared[i].size);
     config.FontDataOwnedByAtlas = false;
     config.MergeMode = font != nullptr;
+    config.DstFont = font;
     config.SizePixels = font != nullptr ? kFontSize * firstEm / metrics.emShare : kFontSize;
     config.ExtraSizeScale = scale;
     config.GlyphOffset.y = offset;
@@ -492,16 +515,37 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
     config.OversampleV = 1;
     config.FontLoader = guardedLoader();
     std::snprintf(config.Name, sizeof(config.Name), "shared font %d", i);
-    ImFont *added = atlas->AddFont(&config);
-    if (added != nullptr) {
-      font = added;
-      g_sharedSources.fetch_add(1, std::memory_order_relaxed);
-    } else {
-      g_rejectedSources.fetch_add(1, std::memory_order_relaxed);
+    return atlas->AddFont(&config);
+  };
+  for (int i = 0; !font && i < capped; ++i) {
+    if (auto *candidate = add(i)) {
+      // A supplemental face can load first. The base must render the overlay's ordinary text.
+      bool text = true;
+      for (unsigned c = ' '; text && c <= '~'; ++c) {
+        text = candidate->IsGlyphInFont(static_cast<ImWchar>(c));
+      }
+      if (text) {
+        font = candidate;
+      } else {
+        atlas->RemoveFont(candidate);
+      }
     }
   }
   if (font == nullptr) {
+    g_rejectedSources.store(capped, std::memory_order_relaxed);
     return nullptr;
+  }
+  const int previous = font->Sources.Size;
+  int rejected = 0;
+  for (int i = 0; i < capped; ++i) {
+    if (!attached(shared[i]) && !add(i)) {
+      ++rejected;
+    }
+  }
+  g_rejectedSources.store(rejected, std::memory_order_relaxed);
+  g_sharedSources.store(font->Sources.Size, std::memory_order_relaxed);
+  if (extending && previous == font->Sources.Size) {
+    return font;
   }
   font->Flags |= ImFontFlags_LockBakedSizes;
   if (font->IsGlyphInFont(IM_UNICODE_CODEPOINT_INVALID)) {

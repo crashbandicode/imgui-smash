@@ -388,6 +388,7 @@ void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned
 }
 
 void test_late_shared_face_joins_the_live_font_once(const std::vector<unsigned char> &fixture) {
+  g_destroyed.clear(); // Texture IDs start over with the new context.
   const auto symbols = symbolFixture(fixture);
   Overlay overlay({shared(fixture)});
   auto *atlas = ImGui::GetIO().Fonts;
@@ -395,7 +396,8 @@ void test_late_shared_face_joins_the_live_font_once(const std::vector<unsigned c
   if (!overlay.font) {
     return;
   }
-  frame({"Hello"});
+  constexpr char icon[] = "\xee\x80\x80"; // U+E000
+  frame({icon});
   const SharedFont both[] = {shared(fixture), shared(symbols)};
   auto *font = ImguiFontSetup::setup(atlas, both, 2, kTest);
   expect(font == overlay.font && atlas->Fonts.Size == 1 && font->IsGlyphInFont(0xe000),
@@ -403,7 +405,10 @@ void test_late_shared_face_joins_the_live_font_once(const std::vector<unsigned c
   if (font != overlay.font) {
     return;
   }
-  frame({"Hello"});
+  const auto shown = frame({icon});
+  const auto *glyph = bake(font)->FindGlyph(0xe000);
+  expect(shown.texturesLive && shown.onCurrentAtlas && glyph && glyph->Codepoint == 0xe000,
+         "a previously missing icon draws from the current atlas after the merge");
   auto *same = ImguiFontSetup::setup(atlas, both, 2, kTest);
   expect(same == font && font->Sources.Size == 2 && ImguiFontSetup::stats().sharedSources == 2,
          "an unchanged provider set adds nothing twice");

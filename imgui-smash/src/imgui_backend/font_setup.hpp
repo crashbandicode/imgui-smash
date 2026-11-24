@@ -7,7 +7,7 @@
 
 // The overlay's fonts. Host-testable: no nn or nvn code here.
 //
-// The first valid system shared font is the 18 px base; the others merge into it. Their data stays system-mapped.
+// The first shared face covering ordinary text is the 18 px base; the others merge into it. Data stays system-mapped.
 // Capitals keep their original share of the line and all sources share the first source's em.
 //
 // Two glyph sets share the one 18 px bake:
@@ -76,8 +76,8 @@ struct Stats {
 // where glyphs exist instead of one array up to the highest codepoint. Off by default; call before setup().
 void usePagedIndex(bool enabled);
 
-// Adds the fonts to `atlas` (empty, not locked) and rasterizes the static set. Returns the main font, or nullptr
-// when it could not be added.
+// Called before a frame, while the atlas is unlocked. Add only new shared sources to the same font;
+// return nullptr until a base can supply the printable ASCII used for overlay text.
 ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Limits &limits = kDefaultLimits);
 
 // Call between two frames, before ImGui::NewFrame(), with the draw data of the frame just rendered (or null).

@@ -5,12 +5,13 @@
 
 namespace ImguiSharedFonts {
 
-int query(ImguiFontSetup::SharedFont *out, int capacity, bool request, bool log) {
+Query query(ImguiFontSetup::SharedFont *out, int capacity, bool request, bool log) {
   static const nn::pl::SharedFontType kOrder[] = {
       nn::pl::STANDARD,     nn::pl::CHINESE_SIMPLIFIED, nn::pl::EXT_CHINESE_SIMPLIFIED,
       nn::pl::CHINESE_TRAD, nn::pl::KOREAN,             nn::pl::NN_EXT,
   };
   int count = 0;
+  unsigned loaded = 0;
   for (nn::pl::SharedFontType type : kOrder) {
     if (count >= capacity) {
       break;
@@ -34,8 +35,9 @@ int query(ImguiFontSetup::SharedFont *out, int capacity, bool request, bool log)
       continue;
     }
     out[count++] = {address, size};
+    loaded |= 1u << type;
   }
-  return count;
+  return {count, loaded, count == static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]))};
 }
 
 }  // namespace ImguiSharedFonts

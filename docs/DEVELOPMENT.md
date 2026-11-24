@@ -137,10 +137,11 @@ from the warnings-denied focused tests and Rust Clippy gates.
   in the release NRO. Build diagnostic artifacts separately.
 - Demo/debug tooling and ImGui's default fonts are compiled out. The backend
   uses only console shared fonts (`font_setup.cpp`, `shared_fonts.cpp`);
-  `AddFontDefault` is not supported by this configuration. The first valid
-  font is the 18 px base and further fonts share its em and scale. Capitals
-  keep their established share of the line. If none is valid, no frame starts;
-  loading is requested once and state is checked about every 60 host frames.
+  `AddFontDefault` is not supported by this configuration. The first face
+  covering printable ASCII is the 18 px base; supplementary faces share
+  its em and scale. No frame starts with symbols alone. Loading is requested
+  once. Until all mappings arrive, the renderer checks every 60 submissions
+  and adds new sources between frames without replacing the live font.
   A font whose declared line box is much larger than its glyphs can draw
   descenders below the line.
 - Whether the `nn::pl` calls can wait is not established; 1.2.0 made the same
