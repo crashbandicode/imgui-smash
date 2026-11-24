@@ -354,6 +354,34 @@ void test_no_valid_shared_font_adds_no_font() {
   }
 }
 
+void test_symbol_only_does_not_make_the_overlay_ready(const std::vector<unsigned char> &fixture) {
+  // Keep the fixture's outlines and metrics; give it a single private-use icon.
+  auto symbols = fixture;
+  const size_t cmap = tableOffset(symbols, "cmap");
+  if (cmap == 0 || cmap + 44 > symbols.size()) {
+    expect(false, "fixture has space for a two-segment Unicode cmap");
+    return;
+  }
+  const unsigned words[] = {0, 1, 3, 1, 0, 12, 4, 32, 0, 4, 4, 1, 0, 0xe000, 0xffff, 0,
+                            0xe000, 0xffff, 0x2002, 1, 0, 0};
+  for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); ++i) {
+    write16(symbols, cmap + 2 * i, words[i]);
+  }
+  expect(ImguiFontSetup::validFont(symbols.data(), symbols.size()), "the supplementary face is structurally valid");
+  Overlay overlay({shared(symbols)});
+  auto *atlas = ImGui::GetIO().Fonts;
+  expect(!overlay.font && atlas->Fonts.Size == 0 && ImguiFontSetup::stats().sharedSources == 0,
+         "a loaded symbol-only face cannot make the overlay ready");
+  if (overlay.font) {
+    return;
+  }
+  const SharedFont both[] = {shared(fixture), shared(symbols)};
+  auto *ready = ImguiFontSetup::setup(atlas, both, 2);
+  expect(ready && atlas->Fonts.Size == 1 && ready->IsGlyphInFont('H') && ready->IsGlyphInFont(0x30c6) &&
+             ready->IsGlyphInFont(0xe000) && ImguiFontSetup::stats().sharedSources == 2,
+         "same-context retry admits the text base and keeps its supplementary icon");
+}
+
 void test_latin_and_accented_capitals_are_one_height(const std::vector<unsigned char> &fixture) {
   auto font = lineVariant(fixture, 880, -120);
   Overlay overlay({shared(font)});
@@ -1001,6 +1029,7 @@ int main(int argc, char **argv) {
     std::printf("== %s per-codepoint index\n", paged ? "paged" : "dense");
     test_the_shared_fonts_are_the_only_sources(fixture);
     test_no_valid_shared_font_adds_no_font();
+    test_symbol_only_does_not_make_the_overlay_ready(fixture);
     test_latin_and_accented_capitals_are_one_height(fixture);
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
