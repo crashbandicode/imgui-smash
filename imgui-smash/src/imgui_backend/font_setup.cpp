@@ -294,13 +294,12 @@ void rebuild(ImFontAtlas *atlas, ImFontBaked *baked) {
     kept.push_back(glyph);
     top = std::max(top, static_cast<unsigned int>(glyph.Codepoint));
   }
-  // The index keeps the static set's entries and the "not found" marks up to its top codepoint; dynamic entries are
-  // gone. Rebuilt through ImGui's setter (dense or paged), the highest codepoint first so a dense index is allocated
-  // once at its final size.
+  // The index keeps static entries and their "not found" marks; dynamic entries are gone. Rebuilt through ImGui's
+  // setter (dense or paged), the highest codepoint first so a dense index is allocated once at its final size.
   ImVector<unsigned int> missing;
   ImVector<float> missingAdvance;
   for (unsigned int c = 0; c <= top; ++c) {
-    if (baked->IndexGetLookup(c) == kIndexNotFound) {
+    if (!isDynamic(g_font, c) && baked->IndexGetLookup(c) == kIndexNotFound) {
       missing.push_back(c);
       missingAdvance.push_back(baked->IndexGetAdvanceX(c));
     }
