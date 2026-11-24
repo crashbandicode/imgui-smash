@@ -45,7 +45,6 @@ include_directories(${PROJECT_SOURCE_DIR}/src_framework/)
 
 include_directories(${PROJECT_SOURCE_DIR}/src)
 include_directories(${IMGUI_DIR})
-include_directories(${PROJECT_SOURCE_DIR}/fonts/precompiled)
 include_directories(${PROJECT_SOURCE_DIR}/shaders/precompiled)
 include_directories(${PROJECT_SOURCE_DIR}/user_config)
 
@@ -66,7 +65,6 @@ file(GLOB_RECURSE SOURCES_CXX
 file(GLOB IMGUI_SOURCES ${IMGUI_DIR}/*.cpp)
 file(GLOB_RECURSE LOCAL_LIBRARIES ${PROJECT_SOURCE_DIR}/libs/*.a)
 
-file(GLOB SOURCES_H ${PROJECT_SOURCE_DIR}/fonts/precompiled/*.h)
 file(GLOB SOURCES_H ${PROJECT_SOURCE_DIR}/shaders/precompiled/*.h)
 file(GLOB SOURCES_H ${PROJECT_SOURCE_DIR}/user_config/*.h)
 

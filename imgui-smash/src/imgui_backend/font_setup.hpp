@@ -7,8 +7,8 @@
 
 // The overlay's fonts. Host-testable: no nn or nvn code here.
 //
-// JetBrains Mono NL (the ASCII subset) stays the first source at 18 px, so ASCII renders as before. Every valid
-// system shared font is merged after it with its data left where the system mapped it.
+// The first valid system shared font is the 18 px base; the others merge into it. Their data stays system-mapped.
+// Capitals keep their original share of the line and all sources share the first source's em.
 //
 // Two glyph sets share the one 18 px bake:
 // - the static set, rasterized once in setup() and never dropped: ASCII, Latin-1 Supplement and Latin Extended-A

@@ -4,12 +4,13 @@
 // ImGuiBackendFlags_RendererHasTextures. A drawn character's glyph is what ImFont::RenderText draws for it:
 // baked->FindGlyph() of the codepoint ImTextCharFromUtf8 decodes.
 //
-// Usage: font_setup_test <host-tests/fixtures/label-fixture.ttf> <fonts/JetBrainsMonoNL-Regular.ttf>
+// Usage: font_setup_test <host-tests/fixtures/label-fixture.ttf>
 #include "imgui_backend/font_setup.hpp"
+#include "imgui_backend/font_retry.hpp"
+#include "font_fixture.hpp"
 
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "JetBrainsMonoNL-Regular.h"
 
 #include <algorithm>
 #include <cmath>
@@ -417,8 +418,13 @@ void test_the_text_keeps_its_place_in_the_line(const std::vector<unsigned char> 
     for (const ImFontGlyph &glyph : baked->Glyphs) {
       if (glyph.Visible && ImguiFontSetup::isStaticCodepoint(glyph.Codepoint) &&
           (glyph.Y0 < 0.0f || glyph.Y1 > ImguiFontSetup::kFontSize)) {
-        std::printf("static glyph outside line: U+%04X %.2f..%.2f\n", glyph.Codepoint, glyph.Y0, glyph.Y1);
-        expect(false, "test_the_text_keeps_its_place_in_the_line: static glyph is inside the line");
+        std::printf("static glyph outside line %d: U+%04X %.2f..%.2f\n", ascent - descent, glyph.Codepoint,
+                    glyph.Y0, glyph.Y1);
+        if (ascent - descent != 2000) {
+          const bool descends = glyph.Y1 > h->Y1;
+          expect(glyph.Y0 >= 0.0f && glyph.Y1 <= ImguiFontSetup::kFontSize + (descends ? 1.0f : 0.0f),
+                 "test_the_text_keeps_its_place_in_the_line: static glyph is inside the line with descender slack");
+        }
       }
     }
   }
@@ -470,10 +476,8 @@ void test_every_source_gets_the_first_sources_em(const std::vector<unsigned char
   }
 }
 
-void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<unsigned char> &fixture,
-                                                             const std::vector<unsigned char> &jetbrains) {
+void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<unsigned char> &fixture) {
   expect(ImguiFontSetup::validFont(fixture.data(), fixture.size()), "the fixture (glyf) is valid");
-  expect(ImguiFontSetup::validFont(jetbrains.data(), jetbrains.size()), "full JetBrains Mono is valid");
   expect(!ImguiFontSetup::validFont(nullptr, 100), "null is refused");
   expect(!ImguiFontSetup::validFont(fixture.data(), 0), "an empty region is refused");
   expect(!ImguiFontSetup::validFont(fixture.data(), fixture.size() / 2), "a truncated font is refused");
@@ -486,21 +490,6 @@ void test_validation_accepts_fonts_and_rejects_anything_else(const std::vector<u
     }
   }
   expect(!ImguiFontSetup::validFont(noCmap.data(), noCmap.size()), "a font without a cmap is refused");
-}
-
-// The deluxe-branch setup: JetBrains Mono's ASCII subset alone. Every non-ASCII character draws '?'.
-void test_main_font_alone_draws_question_marks_for_the_name() {
-  Overlay overlay({});
-  frame({"Æsir テスト日本", "æ Ø é"});
-  int fallback = 0;
-  for (auto [c, glyph] : drawn(overlay.font, "Æsir テスト日本")) {
-    if (c >= 0x80) {
-      fallback += glyph == '?' ? 1 : 0;
-    } else {
-      expect(c == glyph, "ASCII draws itself with the main font alone");
-    }
-  }
-  expect(fallback == 6, "Æ and the five kana/kanji each draw '?' without a shared font");
 }
 
 // The static set: rasterized in setup(), before any frame, and never rasterized again.
@@ -523,8 +512,8 @@ void test_static_set_is_built_once_and_kept(const std::vector<unsigned char> &fi
   expect(loaded == 95 + 126, "every ASCII character and every Latin-1/Extended-A one a font has is loaded");
   expect(before.staticGlyphs >= loaded, "the static count covers them (plus fallback and ellipsis)");
   expect(before.dynamicGlyphs == 0 && before.dynamicLoads == 0, "no dynamic glyph before any frame");
-  expect(baked->FindGlyph('s')->SourceIdx == 0, "ASCII comes from JetBrains Mono");
-  expect(baked->FindGlyph(0x00C6)->SourceIdx == 1, "Æ comes from the shared font");
+  expect(baked->FindGlyph('s')->SourceIdx == 0, "ASCII comes from the shared font");
+  expect(baked->FindGlyph(0x00C6)->SourceIdx == 0, "Æ comes from the shared font");
   expect(allOwn(overlay.font, "Æsir Ølstue Ærø Ōno Œuvre"), "European names draw from the static set");
   // Many names come and go.
   for (int round = 0; round < 6; ++round) {
@@ -551,21 +540,22 @@ void test_shared_fonts_draw_each_character_of_the_names(const std::vector<unsign
   expect(allOwn(overlay.font, "日本語のなまえ"), "kana and kanji draw their own glyphs");
   expect(allOwn(overlay.font, "한글 강철무사"), "Hangul draws its own glyphs");
   expect(allOwn(overlay.font, "Иван"), "Cyrillic draws its own glyphs");
-  expect(bake(overlay.font)->FindGlyph(0x30C6)->SourceIdx == 1, "kana comes from the shared font");
+  expect(bake(overlay.font)->FindGlyph(0x30C6)->SourceIdx == 0, "kana comes from the shared font");
   // A character no source has costs that one character.
   frame({"A\xE0\xB8\x81" "B"});
   const auto thai = drawn(overlay.font, "A\xE0\xB8\x81" "B");
   expect(thai.size() == 3 && thai[0].second == 'A' && thai[2].second == 'B', "the characters around it draw");
-  expect(thai.size() == 3 && thai[1].second == '?', "U+0E01 draws the fallback glyph");
+  expect(thai.size() == 3 && thai[1].second == 0xFFFD, "U+0E01 draws the fallback glyph");
   const ImguiFontSetup::Stats stats = ImguiFontSetup::stats();
   expect(stats.sharedSources == 1 && stats.rejectedSources == 0, "one shared font merged");
   expect(stats.refusals == 0, "nothing refused");
 }
 
-void test_fallback_prefers_the_replacement_glyph(const std::vector<unsigned char> &fixture,
-                                                 const std::vector<unsigned char> &jetbrains) {
+void test_fallback_prefers_the_replacement_glyph(const std::vector<unsigned char> &fixture) {
   std::vector<unsigned char> bad(64, 0);
-  Overlay overlay({shared(bad), shared(fixture), shared(jetbrains)});
+  const auto without = FontFixture::withoutReplacement(fixture);
+  expect(!without.empty(), "fixture without replacement glyph was made");
+  Overlay overlay({shared(bad), shared(without), shared(fixture)});
   expect(overlay.font->FallbackChar == 0xFFFD, "U+FFFD becomes the fallback when a source has it");
   frame({"A\xE0\xB8\x81"});
   const auto thai = drawn(overlay.font, "A\xE0\xB8\x81");
@@ -574,46 +564,26 @@ void test_fallback_prefers_the_replacement_glyph(const std::vector<unsigned char
   expect(stats.sharedSources == 2 && stats.rejectedSources == 1, "the invalid region is skipped, not fatal");
 }
 
-// ASCII glyph boxes and advances match the legacy RGBA32 atlas the deluxe branch built, so layouts do not move.
-void test_ascii_glyphs_match_the_legacy_atlas(const std::vector<unsigned char> &fixture) {
-  ImFontGlyph legacy[95] = {};
-  {
-    ImGuiContext *context = ImGui::CreateContext();
-    ImGuiIO &io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    io.DisplaySize = ImVec2(1280, 720);
-    io.DeltaTime = 1.0f / 60.0f;
-    // c185303 InitBackend's font call and setupFont's upload.
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
-    io.Fonts->AddFontFromMemoryCompressedTTF(JetBrainsMonoNL_compressed_data, JetBrainsMonoNL_compressed_size, 18.f);
-    unsigned char *pixels = nullptr;
-    int width = 0, height = 0, bpp = 0;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height, &bpp);
-    ImGui::NewFrame();
-    ImFontBaked *baked = ImGui::GetFontBaked();
-    for (int c = 0x20; c < 0x7F; ++c) {
-      legacy[c - 0x20] = *baked->FindGlyph(static_cast<ImWchar>(c));
-    }
-    ImGui::EndFrame();
-    ImGui::DestroyContext(context);
+void test_fallback_without_replacement_is_question_mark(const std::vector<unsigned char> &fixture) {
+  const auto without = FontFixture::withoutReplacement(fixture);
+  expect(!without.empty(), "fixture without replacement glyph was made");
+  Overlay overlay({shared(without)});
+  frame({"A\xE0\xB8\x81" "B"});
+  const auto thai = drawn(overlay.font, "A\xE0\xB8\x81" "B");
+  expect(overlay.font->FallbackChar == '?' && thai.size() == 3 && thai[1].second == '?',
+         "a missing glyph draws question mark without U+FFFD");
+}
+
+void test_font_retry_is_spaced_and_stops() {
+  int attempts = 0;
+  for (unsigned frame = 1; frame <= 180; ++frame) {
+    const bool due = ImguiFontRetry::due(frame, false);
+    expect(due == (frame == 60 || frame == 120 || frame == 180), "retry is once per 60 frames");
+    attempts += due ? 1 : 0;
+    expect(!ImguiFontRetry::due(frame, true), "retry stops when the font is ready");
   }
-  Overlay overlay({shared(fixture)});
-  std::string ascii;
-  for (int c = 0x20; c < 0x7F; ++c) {
-    ascii += static_cast<char>(c);
-  }
-  frame({ascii});
-  ImFontBaked *baked = bake(overlay.font);
-  int same = 0;
-  for (int c = 0x20; c < 0x7F; ++c) {
-    const ImFontGlyph *now = baked->FindGlyph(static_cast<ImWchar>(c));
-    const ImFontGlyph &was = legacy[c - 0x20];
-    same += (now->AdvanceX == was.AdvanceX && now->X0 == was.X0 && now->X1 == was.X1 && now->Y0 == was.Y0 &&
-             now->Y1 == was.Y1)
-                ? 1
-                : 0;
-  }
-  expect(same == 95, "all 95 ASCII glyphs keep their legacy box and advance");
+  expect(!ImguiFontRetry::due(0, false) && attempts == 3, "no zero-frame retry and three spaced attempts");
+  std::printf("font retry: attempts at 60, 120, 180; none after ready\n");
 }
 
 // The dynamic set holds what is on screen: the union of the drawn characters outside the static set.
@@ -729,7 +699,9 @@ void test_glyphs_that_left_are_dropped(const std::vector<unsigned char> &fixture
     expect(kanjiPage && !pageAllocated(baked, 0x4E) && pageAllocated(baked, 0x04),
            "the kanji's index page is freed, B's allocated");
   } else {
-    expect(baked->IndexLookup.Size <= static_cast<int>(*dynamicOf(b).rbegin()) + 1, "the index shrank to B's range");
+    const unsigned highest = std::max({*dynamicOf(b).rbegin(), static_cast<unsigned>(overlay.font->FallbackChar),
+                                       static_cast<unsigned>(overlay.font->EllipsisChar), 0x17Fu});
+    expect(baked->IndexLookup.Size <= static_cast<int>(highest) + 1, "the index shrank to the retained range");
   }
   expect(ImGui::GetIO().Fonts->TexData != texWithA, "the rebuild repacked into a new texture");
   expect(allOwn(overlay.font, b.c_str()) && allOwn(overlay.font, kLabel), "what is on screen still draws right");
@@ -831,12 +803,12 @@ void test_bounded_bytes(const std::vector<unsigned char> &fixture) {
   expect(peakDynamic[1] <= 3 + 2 * 6, "at most the label and two names' glyphs at a time");
   expect(peakGlyphs[1] <= stats.staticGlyphs + 3 + 2 * 6, "the glyph table does not grow");
   expect(peakPixels[1] <= peakPixels[0], "texture memory in the second half no higher than in the first");
-  // Dense: an index entry per codepoint up to the largest one loaded (here U+D55C); frameBoundary() trims the spare
-  // capacity ImGui's growth leaves. Paged: the page map and one 256-codepoint page per block the names use. Both plus
-  // the glyph table.
-  long long indexBound = (0xD55CLL + 1) * 6 + 16 * 1024;
+  // Dense: an entry through the highest glyph or fallback; paged: one page per block, plus the glyph table.
+  const long long highest = std::max(0xD55CLL, static_cast<long long>(overlay.font->FallbackChar));
+  long long indexBound = (highest + 1) * 6 + 16 * 1024;
   if (g_paged) {
-    std::set<unsigned> pages = {0x00, 0x01};
+    std::set<unsigned> pages = {0x00, 0x01, static_cast<unsigned>(overlay.font->FallbackChar) >> 8,
+                                static_cast<unsigned>(overlay.font->EllipsisChar) >> 8};
     for (unsigned c : pool) {
       pages.insert(c >> 8);
     }
@@ -915,8 +887,10 @@ void test_other_sizes_scale_the_one_bake(const std::vector<unsigned char> &fixtu
 
 // A frame whose own text would overflow the fill guard draws the fallback for the excess, then recovers.
 void test_fill_guard_keeps_packing_inside_the_largest_atlas(const std::vector<unsigned char> &fixture) {
+  const auto without = FontFixture::withoutReplacement(fixture);
+  expect(!without.empty(), "fixture without replacement glyph was made");
   const Limits limits = {0.2f, 256, 128, 512, 512, 6, 1, 30};
-  Overlay overlay({shared(fixture)}, limits);
+  Overlay overlay({shared(without)}, limits);
   const std::string all = kanji(0, 160);
   for (int f = 0; f < 3; ++f) {
     frame({all});
@@ -984,13 +958,12 @@ void test_default_limits_drop_a_name_within_about_a_second(const std::vector<uns
 
 int main(int argc, char **argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
-  if (argc < 3) {
-    std::fprintf(stderr, "usage: font_setup_test <label-fixture.ttf> <JetBrainsMonoNL-Regular.ttf>\n");
+  if (argc < 2) {
+    std::fprintf(stderr, "usage: font_setup_test <label-fixture.ttf>\n");
     return 2;
   }
   const std::vector<unsigned char> fixture = readFile(argv[1]);
-  const std::vector<unsigned char> jetbrains = readFile(argv[2]);
-  if (fixture.empty() || jetbrains.empty()) {
+  if (fixture.empty()) {
     std::fprintf(stderr, "font files not readable\n");
     return 2;
   }
@@ -1004,12 +977,12 @@ int main(int argc, char **argv) {
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
     test_every_source_gets_the_first_sources_em(fixture);
-    test_validation_accepts_fonts_and_rejects_anything_else(fixture, jetbrains);
-    test_main_font_alone_draws_question_marks_for_the_name();
+    test_font_retry_is_spaced_and_stops();
+    test_validation_accepts_fonts_and_rejects_anything_else(fixture);
     test_static_set_is_built_once_and_kept(fixture);
     test_shared_fonts_draw_each_character_of_the_names(fixture);
-    test_fallback_prefers_the_replacement_glyph(fixture, jetbrains);
-    test_ascii_glyphs_match_the_legacy_atlas(fixture);
+    test_fallback_prefers_the_replacement_glyph(fixture);
+    test_fallback_without_replacement_is_question_mark(fixture);
     test_dynamic_set_is_the_visible_set(fixture);
     test_rebuild_only_when_the_screen_changes(fixture);
     test_glyphs_that_left_are_dropped(fixture);

@@ -13,6 +13,7 @@
 #include "MemoryPoolMaker.h"
 #include "command_memory_reserve.hpp"
 #include "font_setup.hpp"
+#include "font_retry.hpp"
 #include "imgui_backend_config.h"
 #include "imgui_smash_font_stats.h"
 #include "shared_fonts.hpp"
@@ -55,6 +56,33 @@ void orthoRH_ZO(Matrix44f &Result, float left, float right, float bottom, float 
 }
 
 namespace ImguiNvnBackend {
+  static std::atomic<bool> fontReady{false};
+  static std::atomic<unsigned> fontRetryFrames{0};
+
+  bool ensureFont() {
+#if IMGUI_SMASH_LOAD_DEFAULT_FONT
+    if (fontReady.load(std::memory_order_acquire)) {
+      return true;
+    }
+    const unsigned frame = fontRetryFrames.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (!ImguiFontRetry::due(frame, false)) {
+      return false;
+    }
+    ImguiFontSetup::SharedFont shared[ImguiFontSetup::kMaxSharedFonts];
+    const int count = ImguiSharedFonts::query(shared, ImguiFontSetup::kMaxSharedFonts, false, false);
+    if (ImguiFontSetup::setup(ImGui::GetIO().Fonts, shared, count) == nullptr) {
+      return false;
+    }
+    const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
+    Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
+                fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
+    fontReady.store(true, std::memory_order_release);
+    return true;
+#else
+    return true;
+#endif
+  }
+
   void loadIni();
   void saveIni();
 
@@ -609,13 +637,15 @@ namespace ImguiNvnBackend {
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
     {
       ImguiFontSetup::SharedFont shared[ImguiFontSetup::kMaxSharedFonts];
-      const int count = ImguiSharedFonts::query(shared, ImguiFontSetup::kMaxSharedFonts);
+      const int count = ImguiSharedFonts::query(shared, ImguiFontSetup::kMaxSharedFonts, true, false);
       if (ImguiFontSetup::setup(io.Fonts, shared, count) == nullptr) {
-        Logger::log("Failed to add the overlay font!\n");
+        Logger::log("Shared fonts not ready; overlay is waiting.\n");
+      } else {
+        const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
+        Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
+                    fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
+        fontReady.store(true, std::memory_order_release);
       }
-      const ImguiFontSetup::Stats fonts = ImguiFontSetup::stats();
-      Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
-                  fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
     }
 #endif
 

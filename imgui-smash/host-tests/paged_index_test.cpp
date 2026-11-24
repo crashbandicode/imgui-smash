@@ -10,10 +10,10 @@
 // run.py requires the three dumps to be identical, apart from "mode" lines and "bytes" lines (the index's own
 // memory: compared between the two dense runs only). The "bench" mode times CalcTextSize over the labels.
 //
-// Usage: paged_index_test <dense|paged|bench> <label-fixture.ttf> <JetBrainsMonoNL-Regular.ttf> <out.txt>
+// Usage: paged_index_test <dense|paged|bench> <label-fixture.ttf> <out.txt>
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "JetBrainsMonoNL-Regular.h"
+#include "font_fixture.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -253,7 +253,7 @@ void dumpLayout() {
 
 struct Config {
   const char *name;
-  bool replacement;  // merge full JetBrains Mono too: its U+FFFD becomes the fallback
+  bool replacement;
 };
 
 void frameBegin() {
@@ -273,7 +273,7 @@ void frameEnd() {
 // A context with the overlay's font configuration (font_setup.cpp), without its static set and drops: those are
 // font_setup_test's. Leaves it current.
 ImFont *makeContext(const Config &config, bool paged, const std::vector<unsigned char> &fixture,
-                    const std::vector<unsigned char> &jetbrains) {
+                    const std::vector<unsigned char> &withoutReplacement) {
   // CreateContext() keeps the previous context current when there is one.
   ImGui::SetCurrentContext(ImGui::CreateContext());
   ImGuiIO &io = ImGui::GetIO();
@@ -295,23 +295,16 @@ ImFont *makeContext(const Config &config, bool paged, const std::vector<unsigned
   atlas->TexMinHeight = 128;
   atlas->TexMaxWidth = 1024;
   atlas->TexMaxHeight = 1024;
-  ImFont *font = atlas->AddFontFromMemoryCompressedTTF(JetBrainsMonoNL_compressed_data, JetBrainsMonoNL_compressed_size,
-                                                       18.0f);
+  const std::vector<unsigned char> &data = config.replacement ? fixture : withoutReplacement;
+  ImFontConfig source;
+  source.FontData = const_cast<unsigned char *>(data.data());
+  source.FontDataSize = static_cast<int>(data.size());
+  source.FontDataOwnedByAtlas = false;
+  source.SizePixels = 18.0f;
+  source.OversampleH = 1;
+  source.OversampleV = 1;
+  ImFont *font = atlas->AddFont(&source);
   font->Flags |= ImFontFlags_LockBakedSizes;
-  std::vector<const std::vector<unsigned char> *> sources = {&fixture};
-  if (config.replacement) {
-    sources.push_back(&jetbrains);
-  }
-  for (const std::vector<unsigned char> *data : sources) {
-    ImFontConfig source;
-    source.FontData = const_cast<unsigned char *>(data->data());
-    source.FontDataSize = static_cast<int>(data->size());
-    source.FontDataOwnedByAtlas = false;
-    source.MergeMode = true;
-    source.OversampleH = 1;
-    source.OversampleV = 1;
-    atlas->AddFont(&source);
-  }
   if (font->IsGlyphInFont(IM_UNICODE_CODEPOINT_INVALID)) {
     font->FallbackChar = IM_UNICODE_CODEPOINT_INVALID;
   }
@@ -321,9 +314,9 @@ ImFont *makeContext(const Config &config, bool paged, const std::vector<unsigned
 }
 
 void runConfig(const Config &config, bool paged, const std::vector<unsigned char> &fixture,
-               const std::vector<unsigned char> &jetbrains) {
+               const std::vector<unsigned char> &withoutReplacement) {
   std::fprintf(g_out, "config %s\n", config.name);
-  ImFont *font = makeContext(config, paged, fixture, jetbrains);
+  ImFont *font = makeContext(config, paged, fixture, withoutReplacement);
   ImGuiContext *context = ImGui::GetCurrentContext();
   ImFontAtlas *atlas = font->OwnerAtlas;
   ImFontBaked *baked = font->GetFontBaked(18.0f);
@@ -417,7 +410,7 @@ void runConfig(const Config &config, bool paged, const std::vector<unsigned char
 
 // CalcTextSize over each label once its glyphs are loaded. The patched build times its dense and paged contexts in
 // alternating rounds, so both see the same machine load; each figure is the median of the rounds.
-void bench(const std::vector<unsigned char> &fixture, const std::vector<unsigned char> &jetbrains) {
+void bench(const std::vector<unsigned char> &fixture, const std::vector<unsigned char> &withoutReplacement) {
   struct Variant {
     const char *name;
     ImGuiContext *context;
@@ -429,7 +422,7 @@ void bench(const std::vector<unsigned char> &fixture, const std::vector<unsigned
     if (paged && !kPatched) {
       continue;
     }
-    ImFont *font = makeContext({"bench", false}, paged, fixture, jetbrains);
+    ImFont *font = makeContext({"bench", false}, paged, fixture, withoutReplacement);
     const char *name = !kPatched ? "upstream-dense" : (paged ? "patched-paged" : "patched-dense");
     variants.push_back({name, ImGui::GetCurrentContext(), font, {}});
     frameBegin();
@@ -471,25 +464,24 @@ void bench(const std::vector<unsigned char> &fixture, const std::vector<unsigned
 
 int main(int argc, char **argv) {
   const std::string mode = argc >= 2 ? argv[1] : "";
-  if (argc < 5 || (mode != "dense" && mode != "paged" && mode != "bench")) {
-    std::fprintf(stderr, "usage: paged_index_test <dense|paged|bench> <label-fixture.ttf> "
-                         "<JetBrainsMonoNL-Regular.ttf> <out.txt>\n");
+  if (argc < 4 || (mode != "dense" && mode != "paged" && mode != "bench")) {
+    std::fprintf(stderr, "usage: paged_index_test <dense|paged|bench> <label-fixture.ttf> <out.txt>\n");
     return 2;
   }
   const std::vector<unsigned char> fixture = readFile(argv[2]);
-  const std::vector<unsigned char> jetbrains = readFile(argv[3]);
-  g_out = std::fopen(argv[4], "w");
-  if (fixture.empty() || jetbrains.empty() || g_out == nullptr) {
+  const std::vector<unsigned char> withoutReplacement = FontFixture::withoutReplacement(fixture);
+  g_out = std::fopen(argv[3], "w");
+  if (fixture.empty() || withoutReplacement.empty() || g_out == nullptr) {
     std::fprintf(stderr, "inputs not readable or output not writable\n");
     return 2;
   }
   std::fprintf(g_out, "mode build=%s index=%s\n", kPatched ? "patched" : "upstream", mode.c_str());
   if (mode == "bench") {
-    bench(fixture, jetbrains);
+    bench(fixture, withoutReplacement);
   } else {
     dumpLayout();
-    runConfig({"fallback '?'", false}, mode == "paged", fixture, jetbrains);
-    runConfig({"fallback U+FFFD", true}, mode == "paged", fixture, jetbrains);
+    runConfig({"fallback '?'", false}, mode == "paged", fixture, withoutReplacement);
+    runConfig({"fallback U+FFFD", true}, mode == "paged", fixture, withoutReplacement);
   }
   std::fclose(g_out);
   return g_failures == 0 ? 0 : 1;

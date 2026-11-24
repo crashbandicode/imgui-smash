@@ -1,5 +1,8 @@
 label-fixture.ttf: a subset of Noto Sans CJK JP Regular with TrueType outlines, renamed
 "Label Fixture" (no Reserved Font Name used). Built by make_fixture.py; used only by the host tests.
+The subset includes ASCII, the supported Latin-1/Extended-A static set, and the
+test strings. U+FFFD maps to the same glyph as the source font's question mark;
+no glyph from another font is included.
 
 Copyright notice of the source font:
 © 2014-2021 Adobe (http://www.adobe.com/).

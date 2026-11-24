@@ -134,11 +134,16 @@ from the warnings-denied focused tests and Rust Clippy gates.
 
 - `frame-guard-stats` and `draw-stats` add diagnostic writers; neither is enabled
   in the release NRO. Build diagnostic artifacts separately.
-- Demo/debug tooling and bundled Proggy fonts are compiled out. The backend
-  supplies JetBrains Mono NL's ASCII subset and, since 1.1.0,
-  merges the console's shared fonts after it (`font_setup.cpp`,
-  `shared_fonts.cpp`); calling `AddFontDefault` is not supported by this
-  configuration. An ImGui assertion can abort the game.
+- Demo/debug tooling and ImGui's default fonts are compiled out. The backend
+  uses only console shared fonts (`font_setup.cpp`, `shared_fonts.cpp`);
+  `AddFontDefault` is not supported by this configuration. The first valid
+  font is the 18 px base and further fonts share its em and scale. Capitals
+  keep their established share of the line. If none is valid, no frame starts;
+  loading is requested once and state is checked about every 60 host frames.
+  A font whose declared line box is much larger than its glyphs can draw
+  descenders below the line.
+- Whether the `nn::pl` calls can wait is not established; 1.2.0 made the same
+  kind of calls at initialization.
 - The backend's InputHelper reads FullKey, Handheld and JoyDual pads, not
   GameCube controllers. Consumers such as Deluxe can poll their own input.
 - Gamepad navigation (L3 + R3) is off unless `sd:/ultimate/imgui_smash/config.ini`

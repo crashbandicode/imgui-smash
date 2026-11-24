@@ -15,10 +15,8 @@
 // are kept as no-ops. No struct layout changes.
 #define IMGUI_DISABLE_DEBUG_TOOLS
 
-// The backend adds JetBrains Mono NL (18 px) before the atlas is first built, so ImGui
-// never falls back to AddFontDefault() and the embedded ProggyClean/ProggyForever data
-// is unused. With this macro AddFontDefault*() assert instead. Tied to the backend's
-// font flag so that turning the JetBrains font off brings the default fonts back.
+// The backend adds system shared fonts before the first frame. With this macro
+// AddFontDefault*() asserts; the backend waits for a shared font instead.
 #include "imgui_backend_config.h"
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
 #define IMGUI_DISABLE_DEFAULT_FONT

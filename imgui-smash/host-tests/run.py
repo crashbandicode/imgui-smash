@@ -20,7 +20,7 @@ PATCHES = sorted((ROOT / "patches" / "imgui").glob("*.patch"))
 CORE = ["imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp"]
 STRICT = ["-Wall", "-Wextra", "-Werror"]
 CONFIG = '-DIMGUI_USER_CONFIG="host_imgui_config.h"'
-FIXTURES = ["host-tests/fixtures/label-fixture.ttf", "fonts/JetBrainsMonoNL-Regular.ttf"]
+FIXTURES = ["host-tests/fixtures/label-fixture.ttf"]
 
 TESTS = {
     "command_memory_reserve_test": {"include": ["src"]},
@@ -68,7 +68,7 @@ def compile_core(tmp, imgui_dir):
     objs = []
     for source in CORE:
         obj = Path(tmp) / f"{imgui_dir.name}-{source}.o"
-        flags = ["-std=c++23", "-O2", CONFIG, "-Ihost-tests", f"-I{imgui_dir}", "-Ifonts/precompiled"]
+        flags = ["-std=c++23", "-O2", CONFIG, "-Ihost-tests", f"-I{imgui_dir}"]
         if run(["/usr/bin/g++", *flags, "-c", str(imgui_dir / source), "-o", str(obj)]) != 0:
             raise SystemExit(f"FAILED to compile {imgui_dir.name}/{source}")
         objs.append(str(obj))
@@ -77,7 +77,7 @@ def compile_core(tmp, imgui_dir):
 
 def build(tmp, name, spec, imgui_dir, core, suffix=""):
     exe = Path(tmp) / f"{name}{suffix}"
-    includes = spec.get("include", ["host-tests", str(imgui_dir), "fonts/precompiled", "src"])
+    includes = spec.get("include", ["host-tests", str(imgui_dir), "src"])
     flags = ["-std=c++23", "-O2" if spec.get("imgui") else "-O1", "-g", *STRICT, *spec.get("flags", []), CONFIG]
     flags += [f"-I{i}" for i in includes]
     sources = [f"host-tests/{name}.cpp", *spec.get("sources", [])]

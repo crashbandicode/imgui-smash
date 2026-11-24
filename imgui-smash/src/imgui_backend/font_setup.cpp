@@ -1,10 +1,9 @@
 #include "font_setup.hpp"
 
 #include "imgui_internal.h"
-#include "JetBrainsMonoNL-Regular.h"
-
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -67,6 +66,12 @@ struct Table {
   uint32_t length;
 };
 
+struct FontMetrics {
+  float emShare;
+  float capShare;
+  float ascentShare;
+};
+
 bool findTable(const unsigned char *font, size_t size, size_t start, const char *tag, Table *out) {
   if (start + 12 > size) {
     return false;
@@ -111,6 +116,35 @@ bool unicodeCmap(const unsigned char *font, Table cmap) {
     }
   }
   return false;
+}
+
+bool fontMetrics(const void *data, size_t size, FontMetrics *out) {
+  if (!validFont(data, size)) {
+    return false;
+  }
+  const auto *font = static_cast<const unsigned char *>(data);
+  const size_t start = std::memcmp(font, "ttcf", 4) == 0 ? be32(font + 12) : 0;
+  Table head{}, hhea{}, os2{};
+  if (!findTable(font, size, start, "head", &head) || head.length < 20 ||
+      !findTable(font, size, start, "hhea", &hhea) || hhea.length < 8) {
+    return false;
+  }
+  const auto signed16 = [](const unsigned char *p) {
+    const int value = be16(p);
+    return value < 0x8000 ? value : value - 0x10000;
+  };
+  const int em = be16(font + head.offset + 18);
+  const int ascent = signed16(font + hhea.offset + 4);
+  const int line = ascent - signed16(font + hhea.offset + 6);
+  int cap = 0;
+  if (findTable(font, size, start, "OS/2", &os2) && os2.length >= 90 && be16(font + os2.offset) >= 2) {
+    cap = std::max(0, signed16(font + os2.offset + 88));
+  }
+  if (em <= 0 || line <= 0) {
+    return false;
+  }
+  *out = {static_cast<float>(em) / line, static_cast<float>(cap) / line, static_cast<float>(ascent) / line};
+  return true;
 }
 
 bool isDynamic(const ImFont *font, unsigned int c) {
@@ -404,6 +438,7 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   g_seen.clear();
   g_sharedSources.store(0, std::memory_order_relaxed);
   g_rejectedSources.store(0, std::memory_order_relaxed);
+  g_fallbackChar.store(0, std::memory_order_relaxed);
   g_staticGlyphs.store(0, std::memory_order_relaxed);
   g_dynamicGlyphs.store(0, std::memory_order_relaxed);
   g_dynamicVisible.store(0, std::memory_order_relaxed);
@@ -412,6 +447,7 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   g_rebuilds.store(0, std::memory_order_relaxed);
   g_misplaced.store(0, std::memory_order_relaxed);
   g_snapshotCount.store(0, std::memory_order_relaxed);
+  g_indexBytes.store(0, std::memory_order_relaxed);
   g_indexPages.store(0, std::memory_order_relaxed);
   g_bakePaged.store(false, std::memory_order_relaxed);
 
@@ -427,35 +463,48 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   atlas->TexMaxWidth = limits.texMaxWidth;
   atlas->TexMaxHeight = limits.texMaxHeight;
 
-  ImFont *font = atlas->AddFontFromMemoryCompressedTTF(JetBrainsMonoNL_compressed_data,
-                                                       JetBrainsMonoNL_compressed_size, kFontSize);
-  if (font == nullptr) {
-    return nullptr;
-  }
-  // One 18 px bake. Other sizes scale it, as the legacy atlas did, so text that pushes another size adds no bake.
-  font->Flags |= ImFontFlags_LockBakedSizes;
-
-  const int capped = count < kMaxSharedFonts ? count : kMaxSharedFonts;
+  // The shares of the line the overlay's capitals and em have always had.
+  constexpr float kCapShare = 730.0f / 1320.0f;
+  constexpr float kEmShare = 1000.0f / 1320.0f;
+  ImFont *font = nullptr;
+  float firstEm = 0.0f, scale = 1.0f, offset = 0.0f;
+  const int capped = shared == nullptr ? 0 : (count < kMaxSharedFonts ? count : kMaxSharedFonts);
   for (int i = 0; i < capped; ++i) {
-    if (!validFont(shared[i].data, shared[i].size)) {
+    FontMetrics metrics{};
+    if (!fontMetrics(shared[i].data, shared[i].size, &metrics)) {
       g_rejectedSources.fetch_add(1, std::memory_order_relaxed);
       continue;
+    }
+    if (font == nullptr) {
+      firstEm = metrics.emShare;
+      scale = metrics.capShare > 0.0f ? kCapShare / metrics.capShare : kEmShare / metrics.emShare;
+      const float target = kFontSize * (1.0f + scale * (2.0f * metrics.ascentShare - 1.0f)) / 2.0f;
+      offset = target - std::ceil(metrics.ascentShare * kFontSize);
     }
     ImFontConfig config;
     config.FontData = const_cast<void *>(shared[i].data);
     config.FontDataSize = static_cast<int>(shared[i].size);
     config.FontDataOwnedByAtlas = false;
-    config.MergeMode = true;
+    config.MergeMode = font != nullptr;
+    config.SizePixels = font != nullptr ? kFontSize * firstEm / metrics.emShare : kFontSize;
+    config.ExtraSizeScale = scale;
+    config.GlyphOffset.y = offset;
     config.OversampleH = 1;
     config.OversampleV = 1;
     config.FontLoader = guardedLoader();
     std::snprintf(config.Name, sizeof(config.Name), "shared font %d", i);
-    if (atlas->AddFont(&config) != nullptr) {
+    ImFont *added = atlas->AddFont(&config);
+    if (added != nullptr) {
+      font = added;
       g_sharedSources.fetch_add(1, std::memory_order_relaxed);
     } else {
       g_rejectedSources.fetch_add(1, std::memory_order_relaxed);
     }
   }
+  if (font == nullptr) {
+    return nullptr;
+  }
+  font->Flags |= ImFontFlags_LockBakedSizes;
   if (font->IsGlyphInFont(IM_UNICODE_CODEPOINT_INVALID)) {
     font->FallbackChar = IM_UNICODE_CODEPOINT_INVALID;
   }

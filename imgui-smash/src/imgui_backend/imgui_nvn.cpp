@@ -344,6 +344,9 @@ extern "C" void imgui_smash_show_mouse(bool show_mouse) {
 }
 
 nvn::CommandHandle nvnImGui::procDraw() {
+  if (!ImguiNvnBackend::ensureFont()) {
+    return 0;
+  }
   // Between frames: the last frame's draw lists are recorded, the next ones not started. Glyphs that left the screen
   // are dropped here; the new atlas texture goes through renderDrawData's texture requests.
   ImguiFontSetup::frameBoundary(ImGui::GetIO().Fonts, ImGui::GetDrawData());

@@ -52,7 +52,7 @@
 #ifndef IMGUI_SMASH_DRAW_DEMO
 #define IMGUI_SMASH_DRAW_DEMO false
 #endif
-// If true, loads Jetbrains Mono as the default font.
+// If true, loads the console shared fonts as the default font.
 // You can load custom fonts during init using ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF
 #ifndef IMGUI_SMASH_LOAD_DEFAULT_FONT
 #define IMGUI_SMASH_LOAD_DEFAULT_FONT true

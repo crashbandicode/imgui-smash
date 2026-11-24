@@ -60,15 +60,15 @@ recorded. See [the evidence](docs/VALIDATION.md).
 - **Gamepad navigation off by default (since 1.1.0).** L3 + R3 no longer
   toggles ImGui gamepad navigation unless `config.ini` enables it (below).
 
-The font work below came from the former `unicode-shared-font` and
-`sparse-codepoint-index` branches. Online Deluxe 0.10.4 links it, and since
-1.1.0 the standalone has it too.
+The font and paged-index work below builds on the former
+`unicode-shared-font` and `sparse-codepoint-index` branches.
 
 - **Text beyond ASCII.**
-  - **Fonts.** JetBrains Mono's ASCII subset stays the first font at 18 px.
-    The console's system shared fonts (`nn::pl`: Standard with Latin and
-    Japanese, Chinese, Korean, Nintendo Extended) are merged after it, read in
-    place from the memory the system maps, not copied.
+  - **Fonts.** The console's system shared fonts (`nn::pl`: Standard with
+    Latin and Japanese, Chinese, Korean, Nintendo Extended) are the only
+    sources, read in place from system-mapped memory. Text is proportional;
+    capitals keep their height and the 18 px font size still means line height.
+    If no shared font is ready, no frame is started until one loads.
   - **Static set.** ASCII, Latin-1 Supplement and Latin Extended-A
     (European names) are rasterized once at start-up and never change.
   - **Dynamic set.** Any other character is rasterized when a string draws

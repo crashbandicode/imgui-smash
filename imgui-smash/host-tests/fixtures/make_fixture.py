@@ -3,8 +3,9 @@
 
 Source: Noto Sans CJK JP Regular (SIL Open Font License 1.1, Debian package fonts-noto-cjk,
 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc). The subset keeps the test strings (Latin, kana, kanji,
-Hangul, Cyrillic, the ideographic space), every Latin-1 Supplement and Latin Extended-A character the font maps (the
-overlay's static set), and the first 160 CJK ideographs from U+4E00 it maps; the CFF outlines are converted to
+Hangul, Cyrillic, the ideographic space), ASCII, every Latin-1 Supplement and Latin Extended-A character the font maps
+(the overlay's static set), and the first 160 CJK ideographs from U+4E00 it maps. The question mark is also mapped
+to U+FFFD for fallback tests. The CFF outlines are converted to
 TrueType glyf (the shared fonts' outline format) and the family is renamed "Label Fixture".
 
 Needs fontTools (tested with 4.60.1):
@@ -82,8 +83,13 @@ def rename(font):
 
 def main(argv):
     font = pick_font(argv[1] if len(argv) > 1 else SOURCE)
+    for table in font["cmap"].tables:
+        if table.isUnicode() and ord("?") in table.cmap:
+            table.cmap[0xFFFD] = table.cmap[ord("?")]
     cmap = font.getBestCmap()
     wanted = {ord(c) for text in TEXTS for c in text if c != " "}
+    wanted.update(range(0x20, 0x7F))
+    wanted.add(0xFFFD)
     kanji = [cp for cp in range(0x4E00, 0xA000) if cp in cmap][:KANJI]
     wanted.update(kanji)
     missing = sorted(cp for cp in wanted if cp not in cmap)

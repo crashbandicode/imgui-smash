@@ -106,6 +106,8 @@ namespace ImguiNvnBackend {
 
   void InitBackend(const NvnBackendInitInfo &initInfo);
 
+  bool ensureFont();
+
   void ShutdownBackend();
 
   void updateInput();
