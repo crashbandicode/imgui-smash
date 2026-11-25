@@ -465,15 +465,31 @@ static void beginSetup(ImFontAtlas *atlas, const Limits &limits) {
 
 ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Limits &limits) {
   ImFont *font = atlas->Fonts.contains(g_font) ? g_font : nullptr;
-  const bool extending = font != nullptr;
   const int capped = shared ? std::clamp(count, 0, kMaxSharedFonts) : 0;
   const auto attached = [&](const SharedFont &s) {
     return std::any_of(font->Sources.begin(), font->Sources.end(),
                        [&](const ImFontConfig *src) { return src->FontData == s.data; });
   };
-  if (!extending) {
+  // The font depends on which faces are loaded, not on the order they arrived in: its sources stay in query order,
+  // the first text face as the base. A face that loads after one that follows it builds the font again, once.
+  ImFont *replaced = nullptr;
+  if (font != nullptr) {
+    bool follower = false;
+    for (int i = capped - 1; i >= 0 && replaced == nullptr; --i) {
+      if (attached(shared[i])) {
+        follower = true;
+      } else if (follower && validFont(shared[i].data, shared[i].size)) {
+        replaced = font;
+      }
+    }
+    if (replaced != nullptr) {
+      font = nullptr;
+    }
+  }
+  const bool extending = font != nullptr;
+  if (!extending && replaced == nullptr) {
     beginSetup(atlas, limits);
-  } else if (!capped || std::all_of(shared, shared + capped, attached)) {
+  } else if (extending && (!capped || std::all_of(shared, shared + capped, attached))) {
     return font;
   }
 
@@ -532,6 +548,9 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
     }
   }
   if (font == nullptr) {
+    if (replaced != nullptr) {
+      return replaced;
+    }
     g_rejectedSources.store(capped, std::memory_order_relaxed);
     return nullptr;
   }
@@ -546,6 +565,15 @@ ImFont *setup(ImFontAtlas *atlas, const SharedFont *shared, int count, const Lim
   g_sharedSources.store(font->Sources.Size, std::memory_order_relaxed);
   if (extending && previous == font->Sources.Size) {
     return font;
+  }
+  if (replaced != nullptr) {
+    // The new font is in the atlas, so Dear ImGui moves the context's current font to it. Glyph tracking starts
+    // again with the new bake; the counters go on.
+    atlas->RemoveFont(replaced);
+    g_bake = nullptr;
+    g_bakeId = 0;
+    g_snapshotGlyphs = -1;
+    g_seen.clear();
   }
   font->Flags |= ImFontFlags_LockBakedSizes;
   if (font->IsGlyphInFont(IM_UNICODE_CODEPOINT_INVALID)) {
