@@ -2,8 +2,8 @@
 
 ## 1.3.0 (2026-11-24, not released)
 
-A new archive (`5605e032…`, 14,838,316 bytes, from `imgui-smash/` at
-`f6fe1fa`). Not yet run in a game.
+A new archive (`5f895b8b…`, 15,121,360 bytes, from `imgui-smash/` at
+`8afc0d1`). Not yet run in a game.
 
 - **The console's shared fonts are the only fonts.** The embedded JetBrains
   Mono NL is gone, with its files and licence text. Before, ASCII came from

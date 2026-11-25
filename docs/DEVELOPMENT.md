@@ -89,10 +89,10 @@ Where Docker is not available, rootless Podman with `--userns=keep-id` runs the
 same image; 1.1.0's archive was built that way, through a `docker` wrapper on
 `PATH` that adds the flag.
 
-The pinned archive (1.3.0) is **14,838,316 bytes**, SHA-256
-`5605e032189bc48be27feb7321aac5169a44edec131e621e23520c54a85616d7`, built
-from `imgui-smash/` at `f6fe1fa`: 1.1.0's source with the console's shared
-fonts as the only fonts and the rebuild fix. (1.1.0 and 1.2.0 pinned
+The pinned archive (1.3.0) is **15,121,360 bytes**, SHA-256
+`5f895b8b406a559a0315cc23a359b4804958265511d3abc0dbe6cd85ddbac305`, built
+from `imgui-smash/` at `8afc0d1`: 1.1.0's source with the console's shared
+fonts as the only fonts, the rebuild fix, the query-order base and the font worker. (1.1.0 and 1.2.0 pinned
 `c1e4471b…`, 14,820,452 bytes.)
 `build.rs` checks both before linking and never downloads it. Host-only builds
 do not require the archive. The script's Cargo operations are offline; populate

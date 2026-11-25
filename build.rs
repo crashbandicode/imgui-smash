@@ -15,10 +15,10 @@ const PREBUILT_NOT_USED: &str = "0042ff0592313228b0746ee9214091249f7c70a1797e182
 /// fonts, the static and dynamic glyph sets and the opt-in paged codepoint
 /// index; 1.3.0: the console's shared fonts as the only fonts, no embedded
 /// font, and a refused glyph drawn again after a rebuild). Its source is this
-/// repository's `imgui-smash/` at f6fe1fa; `tools/deluxe_parity.py` compares
+/// repository's `imgui-smash/` at 8afc0d1; `tools/deluxe_parity.py` compares
 /// the pins. Any other file is refused.
-const PINNED_SHA256: &str = "5605e032189bc48be27feb7321aac5169a44edec131e621e23520c54a85616d7";
-const PINNED_SIZE: u64 = 14_838_316;
+const PINNED_SHA256: &str = "5f895b8b406a559a0315cc23a359b4804958265511d3abc0dbe6cd85ddbac305";
+const PINNED_SIZE: u64 = 15_121_360;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=IMGUI_SMASH_ARTIFACT_DIR");
