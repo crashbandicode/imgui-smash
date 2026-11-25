@@ -29,7 +29,7 @@ TESTS = {
     "frame_guard_concurrent_test": {"include": ["src"], "sources": ["src/imgui_backend/frame_guard.cpp"],
                                     "flags": ["-pthread"]},
     "texture_rules_test": {"include": ["src"]},
-    "font_setup_test": {"sources": ["src/imgui_backend/font_setup.cpp"], "imgui": True, "args": FIXTURES},
+    "font_setup_test": {"sources": ["src/imgui_backend/font_setup.cpp", "src/imgui_backend/font_feed.cpp"], "imgui": True, "args": FIXTURES},
     "paged_index_test": {"imgui": True, "compare": True},
     "nav_toggle_test": {"include": ["src"]},
     "overlay_texture_policy_test": {"include": ["src/imgui_backend"]},

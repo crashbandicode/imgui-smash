@@ -5,6 +5,7 @@
 // baked->FindGlyph() of the codepoint ImTextCharFromUtf8 decodes.
 //
 // Usage: font_setup_test <host-tests/fixtures/label-fixture.ttf>
+#include "imgui_backend/font_feed.hpp"
 #include "imgui_backend/font_setup.hpp"
 #include "imgui_backend/font_retry.hpp"
 #include "font_fixture.hpp"
@@ -534,6 +535,165 @@ void test_a_late_face_keeps_the_dynamic_tracking_aligned(const std::vector<unsig
   std::printf("late face with a dynamic glyph on screen: dynamic %d, rebuilds %lld\n", after.dynamicGlyphs, after.rebuilds);
   expect(after.dynamicGlyphs == 1 && after.rebuilds == 0,
          "text that stays on screen causes no rebuild after a face joined");
+}
+
+// --- The font feed: one worker makes every platform font call; the render path only reads what it published.
+struct FakePlatform {
+  int requests = 0, states = 0, addresses = 0, sizes = 0, sleeps = 0, starts = 0;
+  int loadsAtPass[ImguiFontFeed::kTypes] = {-1, -1, -1, -1, -1, -1};  // -1: never
+  const std::vector<unsigned char> *bytes[ImguiFontFeed::kTypes] = {};
+  int pass = 0, stopAfter = 1000000;
+  bool canStart = true;
+  void (*entry)(void *) = nullptr;
+  void *arg = nullptr;
+  std::vector<bool> readyAtSleep;  // what the render path answered between two passes
+  bool renderWhileAsleep = false;
+  int calls() const { return requests + states + addresses + sizes; }
+};
+FakePlatform g_pl;
+
+const ImguiFontFeed::Platform kFakePlatform = {
+    [](int) { g_pl.requests++; },
+    [](int type) {
+      g_pl.states++;
+      return g_pl.loadsAtPass[type] >= 0 && g_pl.pass >= g_pl.loadsAtPass[type];
+    },
+    [](int type) -> const void * {
+      g_pl.addresses++;
+      return g_pl.bytes[type]->data();
+    },
+    [](int type) -> size_t {
+      g_pl.sizes++;
+      return g_pl.bytes[type]->size();
+    },
+    []() {
+      g_pl.sleeps++;
+      g_pl.pass++;
+      if (g_pl.renderWhileAsleep) {
+        g_pl.readyAtSleep.push_back(ImguiFontFeed::ready(ImGui::GetIO().Fonts, kTest));
+      }
+      return g_pl.pass < g_pl.stopAfter;
+    },
+    [](void (*entry)(void *), void *arg) {
+      g_pl.starts++;
+      g_pl.entry = entry;
+      g_pl.arg = arg;
+      return g_pl.canStart;
+    },
+};
+
+void allLoadAtOnce(const std::vector<unsigned char> &fixture) {
+  g_pl = FakePlatform{};
+  ImguiFontFeed::reset();
+  for (int type = 0; type < ImguiFontFeed::kTypes; ++type) {
+    g_pl.loadsAtPass[type] = 0;
+    g_pl.bytes[type] = &fixture;
+  }
+}
+
+void test_the_render_path_makes_no_platform_call(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({});
+  auto *atlas = ImGui::GetIO().Fonts;
+  allLoadAtOnce(fixture);
+  bool drew = false;
+  for (int i = 0; i < 200; ++i) {
+    drew |= ImguiFontFeed::ready(atlas, kTest);
+  }
+  expect(!drew && g_pl.calls() == 0, "before the worker ran, the render path draws nothing and calls nothing");
+  const bool started = ImguiFontFeed::startWorker(&kFakePlatform);
+  expect(started && g_pl.starts == 1 && g_pl.entry != nullptr, "the worker is started once");
+  if (!started || g_pl.entry == nullptr) {
+    return;
+  }
+  expect(g_pl.calls() == 0, "starting the worker makes no platform call on the caller");
+  g_pl.entry(g_pl.arg);
+  const int worker = g_pl.calls();
+  expect(worker > 0 && g_pl.requests == ImguiFontFeed::kTypes, "the worker makes the calls, one request per type");
+  bool all = true;
+  for (int i = 0; i < 200; ++i) {
+    all &= ImguiFontFeed::ready(atlas, kTest);
+  }
+  expect(all && g_pl.calls() == worker, "200 render passes draw and make no platform call");
+  expect(atlas->Fonts.Size == 1 && atlas->Fonts[0]->IsGlyphInFont('H'), "the text face reached the font");
+}
+
+void test_fonts_arrive_through_the_mask(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({});
+  auto *atlas = ImGui::GetIO().Fonts;
+  const auto early = symbolFixture(fixture, 0xe000), late = symbolFixture(fixture, 0xe001);
+  g_pl = FakePlatform{};
+  ImguiFontFeed::reset();
+  g_pl.loadsAtPass[5] = 0;  // a symbol face first
+  g_pl.bytes[5] = &early;
+  g_pl.loadsAtPass[0] = 2;  // then the standard face
+  g_pl.bytes[0] = &fixture;
+  g_pl.loadsAtPass[2] = 4;  // then another supplementary face
+  g_pl.bytes[2] = &late;
+  g_pl.stopAfter = 6;
+  g_pl.renderWhileAsleep = true;
+  if (!ImguiFontFeed::startWorker(&kFakePlatform) || g_pl.entry == nullptr) {
+    expect(false, "the worker starts");
+    return;
+  }
+  g_pl.entry(g_pl.arg);
+  const auto &log = g_pl.readyAtSleep;
+  expect(log.size() == 6 && !log[0] && !log[1] && log[2] && log[5],
+         "nothing draws on a symbol face alone; drawing starts once the text face is published");
+  expect(ImguiFontFeed::loadedMask() == 0x25u && !ImguiFontFeed::workerDone(), "the mask names the three loaded types");
+  ImFont *font = atlas->Fonts.Size == 1 ? atlas->Fonts[0] : nullptr;
+  expect(font && font->Sources.Size == 3 && font->Sources[0]->FontData == fixture.data() &&
+             font->Sources[1]->FontData == late.data() && font->Sources[2]->FontData == early.data() &&
+             font->IsGlyphInFont('H') && font->IsGlyphInFont(0xe000) && font->IsGlyphInFont(0xe001),
+         "the published faces are in the font, in query order");
+}
+
+void test_the_worker_ends_when_all_six_are_loaded(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({});
+  g_pl = FakePlatform{};
+  ImguiFontFeed::reset();
+  for (int type = 0; type < ImguiFontFeed::kTypes; ++type) {
+    g_pl.loadsAtPass[type] = type / 2;  // the last two load at the third pass
+    g_pl.bytes[type] = &fixture;
+  }
+  if (!ImguiFontFeed::startWorker(&kFakePlatform) || g_pl.entry == nullptr) {
+    expect(false, "the worker starts");
+    return;
+  }
+  g_pl.entry(g_pl.arg);
+  expect(ImguiFontFeed::workerDone() && ImguiFontFeed::loadedMask() == 0x3fu && g_pl.sleeps == 2 &&
+             g_pl.requests == ImguiFontFeed::kTypes && g_pl.addresses == ImguiFontFeed::kTypes,
+         "the worker returns at the pass that finds all six loaded, having asked for each once");
+  // A type that never loads: the worker goes on, asleep between passes, until it is told to stop.
+  g_pl = FakePlatform{};
+  ImguiFontFeed::reset();
+  for (int type = 0; type < ImguiFontFeed::kTypes - 1; ++type) {
+    g_pl.loadsAtPass[type] = 0;
+    g_pl.bytes[type] = &fixture;
+  }
+  g_pl.stopAfter = 50;
+  if (!ImguiFontFeed::startWorker(&kFakePlatform) || g_pl.entry == nullptr) {
+    expect(false, "the worker starts again after reset");
+    return;
+  }
+  g_pl.entry(g_pl.arg);
+  expect(!ImguiFontFeed::workerDone() && ImguiFontFeed::loadedMask() == 0x1fu && g_pl.sleeps == 50 &&
+             g_pl.requests == ImguiFontFeed::kTypes && g_pl.states == 6 + 49,
+         "with one type never loading it polls only that type, once per pass, and requests nothing again");
+}
+
+void test_no_worker_means_no_overlay_and_no_fallback(const std::vector<unsigned char> &fixture) {
+  Overlay overlay({});
+  auto *atlas = ImGui::GetIO().Fonts;
+  allLoadAtOnce(fixture);
+  g_pl.canStart = false;
+  const bool started = ImguiFontFeed::startWorker(&kFakePlatform);
+  bool drew = false;
+  for (int i = 0; i < 200; ++i) {
+    drew |= ImguiFontFeed::ready(atlas, kTest);
+  }
+  expect(!started && g_pl.starts == 1, "a thread that cannot be created is reported");
+  expect(!drew && g_pl.calls() == 0 && atlas->Fonts.Size == 0,
+         "then the overlay stays off and the render path does not make the calls itself");
 }
 
 void test_latin_and_accented_capitals_are_one_height(const std::vector<unsigned char> &fixture) {
@@ -1188,6 +1348,10 @@ int main(int argc, char **argv) {
     test_the_base_is_chosen_by_font_order_not_arrival(fixture);
     test_a_late_face_adding_a_static_glyph_draws_without_a_rebuild(fixture);
     test_a_late_face_keeps_the_dynamic_tracking_aligned(fixture);
+    test_the_render_path_makes_no_platform_call(fixture);
+    test_fonts_arrive_through_the_mask(fixture);
+    test_the_worker_ends_when_all_six_are_loaded(fixture);
+    test_no_worker_means_no_overlay_and_no_fallback(fixture);
     test_latin_and_accented_capitals_are_one_height(fixture);
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
