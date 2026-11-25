@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.3.0 (2026-11-24, not released)
+## 1.3.0 (2026-11-25)
 
 A new archive (`5f895b8b…`, 15,121,360 bytes, from `imgui-smash/` at
-`8afc0d1`). Not yet run in a game.
+`8afc0d1`). It ran in Eden inside Online Deluxe 0.10.9, which embeds it; the
+standalone NRO has not run in a game, and nothing has run on a console.
 
 - **The console's shared fonts are the only fonts.** The embedded JetBrains
   Mono NL is gone, with its files and licence text. Before, ASCII came from

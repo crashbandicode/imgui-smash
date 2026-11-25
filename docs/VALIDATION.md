@@ -2,8 +2,8 @@
 
 ## Release line
 
-**1.3.0** (2026-11-24, not released) has a new archive: the console's shared
-fonts are the only fonts, and a refused glyph draws again after a rebuild.
+**1.3.0** (2026-11-25) has a new archive: the console's shared fonts are the
+only fonts, and a refused glyph draws again after a rebuild.
 
 - **Archive:** 15,121,360 bytes, SHA-256
   `5f895b8b406a559a0315cc23a359b4804958265511d3abc0dbe6cd85ddbac305`, built
@@ -21,10 +21,21 @@ fonts are the only fonts, and a refused glyph draws again after a rebuild.
 - **The `nn::pl` font calls are IPC.** In the 13.0.5 `sdk` each one opens a
   session to `pl:u`. All of them are made by the font worker thread; the
   render path makes none.
-- **Not checked:** the look in a game, on a console or in Eden. The font
-  worker thread has not run on a Switch or in an emulator: its logic is
-  tested on a PC through a fake platform, and the Switch code for it is
-  compiled only.
+- **Eden, 2026-11-25, inside Online Deluxe 0.10.9** (NRO `39dc8b8c…`, which
+  embeds this archive; LAN Online Quick Play pair, run `i4-final-qp-yoga-04`,
+  real system fonts): the window drew through a match and its sudden death
+  with no desync. Its `renderer-status.txt` read `imgui_font_shared=6`,
+  `imgui_font_rejected=0`, 321 static glyphs and a 512x128 atlas, so the
+  font worker thread ran and its fonts reached the font. The opponent label
+  `Æsir テスト日本` sat at the height of the Latin text; on Online Deluxe
+  0.10.8 in the other window the same label was clearly taller.
+- **Not checked:**
+  - the standalone NRO in a game: that run used Deluxe's built-in host;
+  - anything on a console;
+  - a font that loads late or never: Eden's font service answers "loaded" at
+    once, so those cases rest on the host tests;
+  - the render path's calls in a game: the host test counts them, and no
+    game counter exists.
 
 **1.2.0** (2026-11-13, not released) keeps 1.1.0's archive (`c1e4471b…`) and
 changes only the Rust shell: the paged codepoint index when every client

@@ -25,8 +25,9 @@ every client can read it, exports its counters and takes no lock in the hook
 path. The standalone stays optional; Deluxe doesn't need it. (1.1.0 was
 staged but never published; its changes are in 1.2.0.)
 
-For **Smash Ultimate 13.0.5**. 1.3.0 has not run in a game yet, and neither
-it nor 1.2.0 is on the operator's card. 1.2.0's
+For **Smash Ultimate 13.0.5**. 1.3.0's archive ran in Eden inside Online
+Deluxe 0.10.9 (2026-11-25); the standalone NRO itself has not run in a game.
+Neither it nor 1.2.0 is on the operator's card. 1.2.0's
 runtime record is from Eden (2026-11-13), not a console: Online Deluxe drew
 its window through it as it does through its built-in host (pairs imp-opp9
 and imp-opp10), with the opponent label `Æsir テスト` in each character's own
