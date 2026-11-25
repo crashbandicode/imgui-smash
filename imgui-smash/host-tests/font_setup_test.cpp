@@ -7,7 +7,6 @@
 // Usage: font_setup_test <host-tests/fixtures/label-fixture.ttf>
 #include "imgui_backend/font_feed.hpp"
 #include "imgui_backend/font_setup.hpp"
-#include "imgui_backend/font_retry.hpp"
 #include "font_fixture.hpp"
 
 #include "imgui.h"
@@ -916,18 +915,6 @@ void test_fallback_without_replacement_is_question_mark(const std::vector<unsign
          "a missing glyph draws question mark without U+FFFD");
 }
 
-void test_font_retry_is_spaced_and_stops() {
-  int attempts = 0;
-  for (unsigned frame = 1; frame <= 180; ++frame) {
-    const bool due = ImguiFontRetry::due(frame, false);
-    expect(due == (frame == 60 || frame == 120 || frame == 180), "retry is once per 60 frames");
-    attempts += due ? 1 : 0;
-    expect(!ImguiFontRetry::due(frame, true), "retry stops when the font is ready");
-  }
-  expect(!ImguiFontRetry::due(0, false) && attempts == 3, "no zero-frame retry and three spaced attempts");
-  std::printf("font retry: attempts at 60, 120, 180; none after ready\n");
-}
-
 // The dynamic set holds what is on screen: the union of the drawn characters outside the static set.
 void test_dynamic_set_is_the_visible_set(const std::vector<unsigned char> &fixture) {
   Overlay overlay({shared(fixture)});
@@ -1356,7 +1343,6 @@ int main(int argc, char **argv) {
     test_capitals_keep_their_share_of_the_line(fixture);
     test_the_text_keeps_its_place_in_the_line(fixture);
     test_every_source_gets_the_first_sources_em(fixture);
-    test_font_retry_is_spaced_and_stops();
     test_validation_accepts_fonts_and_rejects_anything_else(fixture);
     test_static_set_is_built_once_and_kept(fixture);
     test_shared_fonts_draw_each_character_of_the_names(fixture);

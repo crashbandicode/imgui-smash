@@ -12,8 +12,8 @@
 #include "helpers/memoryHelper.h"
 #include "MemoryPoolMaker.h"
 #include "command_memory_reserve.hpp"
+#include "font_feed.hpp"
 #include "font_setup.hpp"
-#include "font_retry.hpp"
 #include "imgui_backend_config.h"
 #include "imgui_smash_font_stats.h"
 #include "shared_fonts.hpp"
@@ -56,41 +56,18 @@ void orthoRH_ZO(Matrix44f &Result, float left, float right, float bottom, float 
 }
 
 namespace ImguiNvnBackend {
-  enum class FontState { Waiting, Drawing, Complete };
-  static std::atomic<FontState> fontState{FontState::Waiting};
-  static std::atomic<unsigned> fontRetryFrames{0};
-
+  bool ensureFont() {
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
-  static bool refreshFonts(bool request) {
-    // The frame-entry owner serializes retries; loaded shared font mappings are immutable.
-    static unsigned previous = 0;
-    ImguiFontSetup::SharedFont shared[ImguiFontSetup::kMaxSharedFonts];
-    const auto result = ImguiSharedFonts::query(shared, ImguiFontSetup::kMaxSharedFonts, request, false);
-    if (result.loaded == previous) {
-      return fontState.load(std::memory_order_acquire) != FontState::Waiting;
-    }
-    previous = result.loaded;
-    if (ImguiFontSetup::setup(ImGui::GetIO().Fonts, shared, result.count) == nullptr) {
-      return false;
-    }
-    const auto state = result.complete ? FontState::Complete : FontState::Drawing;
-    if (fontState.exchange(state, std::memory_order_acq_rel) == FontState::Waiting) {
+    // The frame-entry owner serializes this. No platform call here: the font worker made them (shared_fonts.cpp).
+    static bool drawing = false;
+    const bool ready = ImguiFontFeed::ready(ImGui::GetIO().Fonts);
+    if (ready && !drawing) {
       const auto fonts = ImguiFontSetup::stats();
       Logger::log("Fonts: %d shared merged, %d rejected, fallback U+%04X, %d static glyphs.\n",
                   fonts.sharedSources, fonts.rejectedSources, fonts.fallbackChar, fonts.staticGlyphs);
     }
-    return true;
-  }
-#endif
-
-  bool ensureFont() {
-#if IMGUI_SMASH_LOAD_DEFAULT_FONT
-    const auto state = fontState.load(std::memory_order_acquire);
-    if (state == FontState::Complete) {
-      return true;
-    }
-    const unsigned frame = fontRetryFrames.fetch_add(1, std::memory_order_relaxed) + 1;
-    return ImguiFontRetry::due(frame, false) ? refreshFonts(false) : state == FontState::Drawing;
+    drawing = ready;
+    return ready;
 #else
     return true;
 #endif
@@ -648,8 +625,8 @@ namespace ImguiNvnBackend {
     bd->isInitialized = false;
 
 #if IMGUI_SMASH_LOAD_DEFAULT_FONT
-    if (!refreshFonts(true)) {
-      Logger::log("Shared fonts not ready; overlay is waiting.\n");
+    if (!ImguiSharedFonts::start()) {
+      Logger::log("No font worker thread; the overlay stays off.\n");
     }
 #endif
 
