@@ -8,8 +8,7 @@ fonts are the only fonts, and a refused glyph draws again after a rebuild.
 - **Archive:** 15,121,360 bytes, SHA-256
   `5f895b8b406a559a0315cc23a359b4804958265511d3abc0dbe6cd85ddbac305`, built
   twice from `8afc0d1` on the Yoga with Online Deluxe's `prepare_imgui.py`
-  commands in the pinned devkitA64 image (Docker), byte for byte. It holds no
-  `JetBrains` string.
+  commands in the pinned devkitA64 image (Docker), byte for byte.
 - **Host tests at `8afc0d1`:** `host-tests/run.py`, 9 of 9. New in
   `font_setup_test`: the shared fonts are the only sources; no valid font
   adds none; `H` and `Æ` are one height; capitals are 10 px at 18 px for line
@@ -19,8 +18,13 @@ fonts are the only fonts, and a refused glyph draws again after a rebuild.
   face does not start drawing; the base follows query order, not arrival; a
   worker makes every platform font call and the render path none. The fixture is
   an open font; no console font is in this repository.
-- **Not checked:** the look in a game, on a console or in Eden. Whether the
-  `nn::pl` calls can wait.
+- **The `nn::pl` font calls are IPC.** In the 13.0.5 `sdk` each one opens a
+  session to `pl:u`. All of them are made by the font worker thread; the
+  render path makes none.
+- **Not checked:** the look in a game, on a console or in Eden. The font
+  worker thread has not run on a Switch or in an emulator: its logic is
+  tested on a PC through a fake platform, and the Switch code for it is
+  compiled only.
 
 **1.2.0** (2026-11-13, not released) keeps 1.1.0's archive (`c1e4471b…`) and
 changes only the Rust shell: the paged codepoint index when every client
