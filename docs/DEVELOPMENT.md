@@ -139,13 +139,19 @@ from the warnings-denied focused tests and Rust Clippy gates.
   uses only console shared fonts (`font_setup.cpp`, `shared_fonts.cpp`);
   `AddFontDefault` is not supported by this configuration. The first face
   covering printable ASCII is the 18 px base; supplementary faces share
-  its em and scale. No frame starts with symbols alone. Loading is requested
-  once. Until all mappings arrive, the renderer checks every 60 submissions
-  and adds new sources between frames without replacing the live font.
+  its em and scale. No frame starts with symbols alone. The font's sources
+  stay in query order: a face that loads after one that follows it builds
+  the font again once, so the standard font is the base whenever it is loaded.
   A font whose declared line box is much larger than its glyphs can draw
   descenders below the line.
-- Whether the `nn::pl` calls can wait is not established; 1.2.0 made the same
-  kind of calls at initialization.
+- Every `nn::pl` font call opens an IPC session to `pl:u` (13.0.5 `sdk`:
+  `GetPlatformServiceManagerServer` calls `ConnectToHipcService`). One worker
+  thread makes all of them (`shared_fonts.cpp`, `font_feed.cpp`): lowest
+  priority, the system's default core, a 16 KiB stack from the host
+  allocator. It polls ten times a second and ends when all six font types are
+  loaded. The render path reads its atomics and makes no platform call. If the
+  thread cannot be created the overlay stays off. How long `pl:u` can take to
+  answer is not established; it no longer matters to the render path.
 - The backend's InputHelper reads FullKey, Handheld and JoyDual pads, not
   GameCube controllers. Consumers such as Deluxe can poll their own input.
 - Gamepad navigation (L3 + R3) is off unless `sd:/ultimate/imgui_smash/config.ini`

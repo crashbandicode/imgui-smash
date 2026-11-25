@@ -69,8 +69,9 @@ The font and paged-index work below builds on the former
     Latin and Japanese, Chinese, Korean, Nintendo Extended) are the only
     sources, read in place from system-mapped memory. Text is proportional;
     capitals keep their height and the 18 px font size still means line height.
-    Drawing waits for a face that can show ordinary text. Supplementary
-    faces that load later join that same font between frames.
+    Drawing waits for a face that can show ordinary text. Faces that load
+    later join the font between frames, in query order. A worker thread makes
+    the system's font calls; the render path makes none.
   - **Static set.** ASCII, Latin-1 Supplement and Latin Extended-A
     (European names) are rasterized once at start-up and never change.
   - **Dynamic set.** Any other character is rasterized when a string draws

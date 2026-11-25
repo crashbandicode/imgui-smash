@@ -17,11 +17,16 @@ A new archive (`5605e032…`, 14,838,316 bytes, from `imgui-smash/` at
     are as tall as before; the baseline keeps its row at 18 px.
   - Every further shared font is drawn at the first one's em.
 - **No text font, no frame.** While no face covers printable ASCII, the host
-  starts no ImGui frame and calls no client. It asks for the fonts once and
-  then checks about once every 60 host frames, without a lock or a wait of
-  its own. Later supplementary faces join the same live font; polling stops
-  when all mappings arrive. Whether the `nn::pl` calls themselves can wait is not established;
-  1.2.0 made the same calls once at initialization.
+  starts no ImGui frame and calls no client. Faces that load later join the
+  font between frames, in query order: the standard font is the base whenever
+  it is loaded, also when a regional font arrived first.
+- **The font calls left the render path.** Every `nn::pl` font call is an IPC
+  to `pl:u`. 1.2.0 made them once in the game's submit hook. One worker
+  thread now makes all of them and publishes the loaded fonts through
+  atomics; the render path only reads those. The thread has the lowest
+  priority, no core of its own choosing and a 16 KiB stack from the host
+  allocator, and ends when all six font types are loaded. If it cannot be
+  created, the overlay stays off.
 - **A refused glyph draws after the next rebuild.** A glyph the fill guard
   refused stayed marked "not found" across a rebuild when the fallback glyph
   was U+FFFD, so it kept drawing the fallback. A rebuild now clears those
